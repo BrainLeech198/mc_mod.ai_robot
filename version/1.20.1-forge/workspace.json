@@ -1,0 +1,14 @@
+{
+  "_说明": "AI 建造区坐标边界。双层防护第 2 层（ControlMod 越界拦截）依据此文件。坐标是世界方块坐标，min/max 各轴。",
+  "world": "minecraft:overworld",
+  "bounds": {
+    "min": { "x": 0, "y": -64, "z": 0 },
+    "max": { "x": 255, "y": 320, "z": 255 }
+  },
+  "_bounds": "TODO: 换成你实际圈的建造区。默认先给 256x384x256 的临时范围，改完再启动。",
+  "enforcement": {
+    "reject_out_of_bounds": true,
+    "log_all_operations": true,
+    "log_file": "logs/operations.jsonl"
+  }
+}

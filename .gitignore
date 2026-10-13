@@ -1,0 +1,9 @@
+# 含密码的配置不进 git
+version/*/config.json
+
+# 日志与运行时产物
+logs/
+*.log
+
+# Python
+__pycache__/

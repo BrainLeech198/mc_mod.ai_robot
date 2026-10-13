@@ -1,0 +1,11 @@
+{
+  "_说明": "WorldEdit 撤回策略。WE 自身撤回历史上限 10 次，这里是 AI 侧的纪律约束。",
+  "we_history_limit": 10,
+  "stop_threshold": 2,
+  "_stop_threshold": "剩余撤回次数 <= 此值时停手上报，不再批量改",
+  "rules": {
+    "checkpoint_before_batch": true,
+    "undo_only_own_changes": true,
+    "report_when_stopped": true
+  }
+}

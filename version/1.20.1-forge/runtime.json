@@ -1,0 +1,21 @@
+{
+  "_说明": "本地运行环境。路径按你机器实际情况填。",
+  "java": {
+    "path": "C:/Program Files/Java/jdk-17.0.12/bin/java.exe",
+    "version": "17",
+    "_note": "1.20.1 Forge 需要 Java 17"
+  },
+  "client": {
+    "instance_dir": "D:/Game/PCL 2/.minecraft/versions/1.20.1 野棕乡都市",
+    "launcher": "D:/Game/PCL 2/Plain Craft Launcher 2.exe",
+    "launcher_type": "PCL2",
+    "forge": "47.4.16",
+    "memory": "4G",
+    "_note": "实例已装 42 个 mod，yztc 客户端需要的 26 个全齐"
+  },
+  "control_mod": {
+    "http_port": 17890,
+    "ws_port": 17891,
+    "_note": "ControlMod 本地接口，只监听 127.0.0.1"
+  }
+}
