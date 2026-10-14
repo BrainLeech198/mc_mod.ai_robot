@@ -68,4 +68,13 @@ class AutoLoginTest {
         newAl(r).onChat("请输入全服密码", 1000);
         assertEquals(List.of("/yzts gate gatepw"), r.sent);
     }
+
+    @Test
+    void distinct_prompts_not_swallowed_by_debounce() {
+        Recorder r = new Recorder();
+        AutoLogin al = newAl(r);
+        al.onChat("请输入全服密码", 1000);
+        al.onChat("请先登录", 2000);
+        assertEquals(List.of("/yzts gate gatepw", "/yzts login pw123"), r.sent);
+    }
 }

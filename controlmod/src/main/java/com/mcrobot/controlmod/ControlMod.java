@@ -12,6 +12,7 @@ public class ControlMod {
     public static final String MODID = "mcrobot_control";
 
     private AutoLogin autoLogin;
+    private boolean configAttempted = false;
 
     public ControlMod() {
         MinecraftForge.EVENT_BUS.register(this);
@@ -20,6 +21,8 @@ public class ControlMod {
     @SubscribeEvent
     public void onChat(ClientChatReceivedEvent event) {
         if (autoLogin == null) {
+            if (configAttempted) return;
+            configAttempted = true;
             Path gameDir = Minecraft.getInstance().gameDirectory.toPath();
             autoLogin = ModConfig.load(gameDir)
                     .map(cfg -> new AutoLogin(cfg, cmd -> {

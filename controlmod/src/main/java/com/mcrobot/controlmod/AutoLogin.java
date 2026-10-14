@@ -1,5 +1,8 @@
 package com.mcrobot.controlmod;
 
+import java.util.EnumMap;
+import java.util.Map;
+
 public class AutoLogin {
     public interface CommandSender { void send(String cmd); }
 
@@ -7,8 +10,8 @@ public class AutoLogin {
 
     private final ModConfig config;
     private final CommandSender sender;
-    private boolean everSent = false;
-    private long lastSentMs = 0L;
+    private final Map<LoginPromptMatcher.Action, Long> lastSentMs =
+            new EnumMap<>(LoginPromptMatcher.Action.class);
     private int attempts = 0;
     private boolean stopped = false;
 
@@ -22,22 +25,22 @@ public class AutoLogin {
         LoginPromptMatcher.Action action = LoginPromptMatcher.match(text);
         switch (action) {
             case STOP_LOCKED, STOP_RATE_LIMITED -> stopped = true;
-            case REGISTER -> maybeSend(nowMs, "/yzts register " + config.registerPassword());
-            case LOGIN -> maybeSend(nowMs, "/yzts login " + config.registerPassword());
+            case REGISTER -> maybeSend(action, nowMs, "/yzts register " + config.registerPassword());
+            case LOGIN -> maybeSend(action, nowMs, "/yzts login " + config.registerPassword());
             case GATE -> {
                 if (!config.gatePassword().isEmpty()) {
-                    maybeSend(nowMs, "/yzts gate " + config.gatePassword());
+                    maybeSend(action, nowMs, "/yzts gate " + config.gatePassword());
                 }
             }
             case NONE -> { }
         }
     }
 
-    private void maybeSend(long nowMs, String cmd) {
+    private void maybeSend(LoginPromptMatcher.Action action, long nowMs, String cmd) {
         if (attempts >= config.maxAttempts()) { stopped = true; return; }
-        if (everSent && nowMs - lastSentMs < DEBOUNCE_MS) return;
-        everSent = true;
-        lastSentMs = nowMs;
+        Long last = lastSentMs.get(action);
+        if (last != null && nowMs - last < DEBOUNCE_MS) return;
+        lastSentMs.put(action, nowMs);
         attempts++;
         sender.send(cmd);
     }
