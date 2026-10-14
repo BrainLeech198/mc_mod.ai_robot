@@ -1,0 +1,13 @@
+# gradle / forge build artifacts
+build/
+.gradle/
+run/
+
+# ide
+.idea/
+*.iml
+.classpath
+.project
+.settings/
+bin/
+out/
