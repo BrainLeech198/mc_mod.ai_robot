@@ -15,7 +15,6 @@
   },
   "control_mod": {
     "http_port": 17890,
-    "ws_port": 17891,
-    "_note": "ControlMod 本地接口，只监听 127.0.0.1"
+    "_note": "ControlMod 本地 HTTP 桥，只监听 127.0.0.1。token 见 instance/control_token（mod 启动生成）"
   }
 }
