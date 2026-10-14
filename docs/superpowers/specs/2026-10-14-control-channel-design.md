@@ -60,9 +60,11 @@ ControlMod 内嵌 HttpServer（JDK com.sun.net.httpserver）
 |---|---|
 | 400 | 请求体非法/缺字段；`/command` 的 command 不以 `/` 开头 |
 | 401 | 缺 `X-Control-Token` 或 token 不匹配 |
+| 403 | 请求带 `Origin` 头（浏览器跨站，见 §7） |
 | 404 | 未知路径 |
 | 405 | 方法不允许 |
 | 409 | **仅 `/command` `/chat`**：不在游戏中（`mc.player == null`），无法执行 |
+| 415 | POST 的 `Content-Type` 不是 `application/json` |
 | 503 | 主线程动作超时未完成 |
 
 **指令语义**：`/command` 收到的是**玩家会原样输入的东西**（含前导斜杠），例如 `//set stone`、`/yzts login x`。ControlMod **去掉恰好一个前导斜杠**后交给 `connection.sendCommand(...)`（与 vanilla `LocalPlayer.chat` 对 `/xx` 的处理一致：`//set` → 包内 `/set`，`/yzts` → 包内 `yzts`）。这是后续 WE 指令共用的通道。
