@@ -67,6 +67,13 @@ class TestControlClient(unittest.TestCase):
         control_client.chat("hi")
         self.assertEqual({"text": "hi"}, self.received[0]["body"])
 
+    def test_close_posts_to_screen_close(self):
+        control_client.close()
+        req = self.received[0]
+        self.assertEqual("POST", req["method"])
+        self.assertEqual("/screen/close", req["path"])
+        self.assertIsNone(req["body"])
+
     def test_http_error_raises_control_error(self):
         self.state["code"] = 409
         self.state["body"] = {"ok": False, "error": "not in game"}

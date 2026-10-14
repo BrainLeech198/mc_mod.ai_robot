@@ -23,9 +23,11 @@ class ControlServerTest {
         final List<String> commands = new ArrayList<>();
         final List<String> chats = new ArrayList<>();
         boolean inGame = true;
+        int closeCount = 0;
         public PlayerState playerState() { return inGame ? state : null; }
         public void sendCommand(String c) { if (!inGame) throw new NotInGameException(); commands.add(c); }
         public void sendChat(String t) { if (!inGame) throw new NotInGameException(); chats.add(t); }
+        public void closeScreen() { if (!inGame) throw new NotInGameException(); closeCount++; }
     }
 
     FakeActions actions;
@@ -158,6 +160,18 @@ class ControlServerTest {
     @Test void commandNotInGameIs409() throws Exception {
         actions.inGame = false;
         HttpResponse<String> r = post("/command", "{\"command\":\"//pos1\"}");
+        assertEquals(409, r.statusCode());
+    }
+
+    @Test void screenCloseCloses() throws Exception {
+        HttpResponse<String> r = post("/screen/close", "{}");
+        assertEquals(200, r.statusCode());
+        assertEquals(1, actions.closeCount);
+    }
+
+    @Test void screenCloseNotInGameIs409() throws Exception {
+        actions.inGame = false;
+        HttpResponse<String> r = post("/screen/close", "{}");
         assertEquals(409, r.statusCode());
     }
 }

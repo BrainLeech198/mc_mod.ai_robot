@@ -60,11 +60,16 @@ def cmd(command):
     return _request("POST", "/command", {"command": command})
 
 
+def close():
+    return _request("POST", "/screen/close")
+
+
 def main(argv=None):
     p = argparse.ArgumentParser(prog="control_client")
     sub = p.add_subparsers(dest="action", required=True)
     sub.add_parser("health")
     sub.add_parser("state")
+    sub.add_parser("close")
     sc = sub.add_parser("chat"); sc.add_argument("text")
     sm = sub.add_parser("cmd"); sm.add_argument("command")
     args = p.parse_args(argv)
@@ -75,8 +80,10 @@ def main(argv=None):
             out = state()
         elif args.action == "chat":
             out = chat(args.text)
-        else:
+        elif args.action == "cmd":
             out = cmd(args.command)
+        else:
+            out = close()
     except ControlError as e:
         print(f"错误: {e}", file=sys.stderr)
         return 1

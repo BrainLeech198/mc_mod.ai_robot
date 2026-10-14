@@ -7,4 +7,6 @@ public interface GameActions {
     /** commandWithoutSlash 形如 "yzts login x" 或 "/set stone"（已去掉一个前导斜杠）。 */
     void sendCommand(String commandWithoutSlash);
     void sendChat(String text);
+    /** 关闭当前打开的界面（等价按 ESC）；无界面时为无害空操作。 */
+    void closeScreen();
 }

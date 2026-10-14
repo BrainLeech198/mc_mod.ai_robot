@@ -75,6 +75,7 @@ public class ControlServer {
                 case "/health" -> { requireGet(method); health(ex); }
                 case "/state" -> { requireGet(method); state(ex); }
                 case "/command" -> { requirePost(method); command(ex); }
+                case "/screen/close" -> { requirePost(method); screenClose(ex); }
                 case "/chat" -> {
                     if (method.equals("GET")) chatSince(ex);
                     else if (method.equals("POST")) chatSend(ex);
@@ -164,6 +165,21 @@ public class ControlServer {
         } catch (ExecutionException e) {
             if (e.getCause() instanceof NotInGameException) throw new HttpError(409, "not in game");
             throw new HttpError(503, "chat failed");
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new HttpError(503, "interrupted");
+        }
+        send(ex, 200, ok());
+    }
+
+    private void screenClose(HttpExchange ex) throws IOException {
+        try {
+            bridge.await(bridge.closeScreen());
+        } catch (TimeoutException e) {
+            throw new HttpError(503, "timeout");
+        } catch (ExecutionException e) {
+            if (e.getCause() instanceof NotInGameException) throw new HttpError(409, "not in game");
+            throw new HttpError(503, "close failed");
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
             throw new HttpError(503, "interrupted");

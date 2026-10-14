@@ -26,6 +26,16 @@ public class MinecraftGameActions implements GameActions {
         p.connection.sendChat(text);
     }
 
+    @Override
+    public void closeScreen() {
+        Minecraft mc = Minecraft.getInstance();
+        if (mc == null) throw new NotInGameException();
+        // 调 onClose 而非直接 setScreen(null)：让 AbstractContainerScreen 顺带关闭容器
+        if (mc.screen != null) {
+            mc.screen.onClose();
+        }
+    }
+
     private static LocalPlayer requirePlayer() {
         Minecraft mc = Minecraft.getInstance();
         LocalPlayer p = mc == null ? null : mc.player;

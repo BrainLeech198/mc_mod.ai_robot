@@ -32,6 +32,10 @@ public class GameBridge {
         return submit(() -> { actions.sendChat(text); return null; });
     }
 
+    public CompletableFuture<Void> closeScreen() {
+        return submit(() -> { actions.closeScreen(); return null; });
+    }
+
     public <T> T await(CompletableFuture<T> future)
             throws InterruptedException, ExecutionException, TimeoutException {
         return future.get(timeoutMs, TimeUnit.MILLISECONDS);

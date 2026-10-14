@@ -16,9 +16,11 @@ class GameBridgeTest {
         final List<String> commands = new ArrayList<>();
         final List<String> chats = new ArrayList<>();
         boolean inGame = true;
+        int closeCount = 0;
         public PlayerState playerState() { return inGame ? state : null; }
         public void sendCommand(String c) { if (!inGame) throw new NotInGameException(); commands.add(c); }
         public void sendChat(String t) { if (!inGame) throw new NotInGameException(); chats.add(t); }
+        public void closeScreen() { if (!inGame) throw new NotInGameException(); closeCount++; }
     }
 
     private static final GameBridge.MainThread DIRECT = Runnable::run;
@@ -41,6 +43,13 @@ class GameBridgeTest {
         assertEquals(List.of("/set stone"), a.commands);
     }
 
+    @Test void closeScreenRunsAction() throws Exception {
+        FakeActions a = new FakeActions();
+        GameBridge b = new GameBridge(a, DIRECT, 1000);
+        b.await(b.closeScreen());
+        assertEquals(1, a.closeCount);
+    }
+
     @Test void actionExceptionPropagates() {
         FakeActions a = new FakeActions(); a.inGame = false;
         GameBridge b = new GameBridge(a, DIRECT, 1000);
@@ -55,6 +64,7 @@ class GameBridgeTest {
             public PlayerState playerState() { seen.set(Thread.currentThread().getName()); return null; }
             public void sendCommand(String c) {}
             public void sendChat(String t) {}
+            public void closeScreen() {}
         };
         ExecutorService ex = Executors.newSingleThreadExecutor(r -> new Thread(r, "fake-main"));
         try {
