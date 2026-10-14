@@ -10,6 +10,10 @@ class LoginPromptMatcherTest {
         assertEquals(Action.REGISTER, match("需要注册 -【GUI界面】"));
     }
     @Test void login_prompt() {
+        // 真机服务端实际发的是「需要登录 -【GUI界面】」
+        assertEquals(Action.LOGIN, match("需要登录 -【GUI界面】"));
+    }
+    @Test void login_prompt_alt() {
         assertEquals(Action.LOGIN, match("请先登录"));
     }
     @Test void gate_prompt() {

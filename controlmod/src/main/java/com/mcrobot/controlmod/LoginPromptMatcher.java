@@ -11,7 +11,7 @@ public final class LoginPromptMatcher {
         if (t.contains("账号已锁定")) return Action.STOP_LOCKED;
         if (t.contains("尝试过于频繁")) return Action.STOP_RATE_LIMITED;
         if (t.contains("需要注册")) return Action.REGISTER;
-        if (t.contains("请先登录")) return Action.LOGIN;
+        if (t.contains("需要登录") || t.contains("请先登录")) return Action.LOGIN;
         if (t.contains("全服密码") && t.contains("输入")) return Action.GATE;
         return Action.NONE;
     }
