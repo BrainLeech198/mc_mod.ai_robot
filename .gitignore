@@ -7,3 +7,6 @@ logs/
 
 # Python
 __pycache__/
+
+# 客户端运行时目录（mod jars、saves、logs 等，不入库）
+instance/

@@ -54,6 +54,17 @@ def main():
         print(cmd)
         return 0
     os.makedirs(INSTANCE_DIR, exist_ok=True)
+    import json as _json
+    cfg_src = os.path.join(WORKSPACE, "version", "1.20.1-forge", "config.json")
+    with open(cfg_src, encoding="utf-8") as f:
+        vcfg = _json.load(f)
+    mcrobot_cfg = {
+        "registerPassword": vcfg["account"]["password"],
+        "gatePassword": vcfg["account"].get("gate_password", ""),
+        "maxAttempts": 3,
+    }
+    with open(os.path.join(INSTANCE_DIR, "mcrobot.json"), "w", encoding="utf-8") as f:
+        _json.dump(mcrobot_cfg, f, ensure_ascii=False)
     print("启动中…（自动连接", SERVER + ":" + PORT, "）")
     subprocess.Popen(cmd, cwd=INSTANCE_DIR, creationflags=subprocess.CREATE_NEW_PROCESS_GROUP)
     return 0
