@@ -1,0 +1,148 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>DeepSink · 大模型 API 平台</title>
+<link rel="icon" href="/assets/favicon.svg">
+<link rel="stylesheet" href="/assets/style.css">
+</head>
+<body>
+<nav class="nav"><div class="nav-in">
+  <a class="brand" href="/"><span class="logo">DS</span> DeepSink</a>
+  <div class="nav-links">
+    <a class="on" href="/">官网</a>
+    <a href="/chat">对话</a>
+    <a href="/platform">开放平台</a>
+    <a href="/docs">文档</a>
+    <a href="/status">状态</a>
+  </div>
+  <div class="spacer"></div>
+  <span id="navauth"></span>
+</div></nav>
+
+<div class="wrap">
+  <!-- Hero：文案左 · 终端右 -->
+  <section class="hero-split">
+    <div class="hcol">
+      <span class="tag">OpenAI + Anthropic 双协议</span>
+      <h1>一个端点，<span class="grad">接入所有大模型客户端</span></h1>
+      <p class="lead">
+        DeepSink 提供与 <code>OpenAI</code> 和 <code>Anthropic</code> 完全兼容的 API：
+        把客户端的 <code>base_url</code> 指向 <code>__HOST_PORT__</code>，任意 SDK、命令行工具
+        或 MC 模组即刻获得对话与推理能力。账户、API 密钥与用量计费一体内建。
+      </p>
+      <div class="cta-row">
+        <a class="btn-primary" href="/chat">开始对话 →</a>
+        <a class="btn" href="/platform">开放平台</a>
+        <a class="btn" href="/docs">接入文档</a>
+      </div>
+      <div class="hud">
+        <span class="hud-i ok"><i class="dot"></i>服务在线</span>
+        <span class="hud-i">协议 <b>OpenAI · Anthropic</b></span>
+        <span class="hud-i">端点 <b>__HOST_PORT__</b></span>
+        <span class="hud-i">延迟 <b id="lat">—</b></span>
+      </div>
+    </div>
+    <div class="hcol">
+      <div class="term-card">
+        <div class="term-h"><span class="wdot r"></span><span class="wdot y"></span><span class="wdot g"></span>
+          <span class="t">curl 试一下</span></div>
+        <pre>curl __BASE_URL__/chat/completions \
+  -H "Authorization: Bearer $DEEPSINK_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"model":"__MODEL__","messages":[{"role":"user","content":"你好"}]}'</pre>
+      </div>
+    </div>
+  </section>
+
+  <section class="sec">
+    <div class="grid g4">
+      <div class="card feat"><div class="ic">⇄</div><h3>双协议兼容</h3>
+        <p>同时支持 <b>OpenAI</b>（<code>/v1/chat/completions</code>）与 <b>Anthropic</b>（<code>/v1/messages</code>），含 SSE 流式输出。</p></div>
+      <div class="card feat"><div class="ic">🔑</div><h3>开放平台</h3>
+        <p>签发、禁用与轮换 API 密钥；实时查看调用量、Token 用量与账户余额。</p></div>
+      <div class="card feat"><div class="ic">¥</div><h3>按量计费</h3>
+        <p>按输入 / 输出 Token 计费；余额不足返回标准 <code>402 insufficient_quota</code>。</p></div>
+      <div class="card feat"><div class="ic">◆</div><h3>多模型目录</h3>
+        <p>对话与推理模型统一编入 <code>/v1/models</code>，上下文窗口与能力标签随目录下发。</p></div>
+    </div>
+  </section>
+
+  <section class="sec">
+    <p class="sec-label">三步接入</p>
+    <div class="grid g3">
+      <div class="card step"><div class="num">1</div><h3>注册即可用</h3>
+        <p>邮箱注册，自动开通 <b>¥10.00</b> 体验额度；账户与用量安全存储。</p></div>
+      <div class="card step"><div class="num">2</div><h3>创建 API key</h3>
+        <p>到 <a href="/platform">开放平台</a> 签发密钥。完整 key 仅在创建时显示一次，之后只留掩码。</p></div>
+      <div class="card step"><div class="num">3</div><h3>填写 base_url</h3>
+        <p>把客户端指向 <code>__BASE_URL__</code>，填入 key 与模型 <code>__MODEL__</code>，即可调用。</p></div>
+    </div>
+  </section>
+
+  <section class="sec grid g2">
+    <div class="card">
+      <h2>接入信息</h2>
+      <p class="sub">填入任意支持自定义 base_url 的客户端即可。</p>
+      <div class="kv">
+        <div class="k">OpenAI Base</div>
+        <div class="copybar"><code id="o">__BASE_URL__</code><button class="ghost" onclick="copy($('#o').textContent)">复制</button></div>
+        <div class="k">Anthropic Base</div>
+        <div class="copybar"><code id="a">__A_BASE_URL__</code><button class="ghost" onclick="copy($('#a').textContent)">复制</button></div>
+        <div class="k">模型</div><div><code>__MODEL__</code></div>
+      </div>
+      <p class="sub" style="margin-top:12px">密钥在 <a href="/platform">开放平台</a> 创建；完整 key 仅创建时显示一次。</p>
+    </div>
+
+    <div class="card">
+      <h2>定价</h2>
+      <div class="price">
+        <div class="pitem"><div class="pn">输入</div><div class="pa">¥0.002<span>/1K tok</span></div></div>
+        <div class="pitem"><div class="pn">输出</div><div class="pa">¥0.008<span>/1K tok</span></div></div>
+        <div class="pitem"><div class="pn">新用户赠送</div><div class="pa">¥10.00</div></div>
+      </div>
+      <hr>
+      <p class="sub" style="margin:0">当前余额 <b id="bal2">—</b> __CURRENCY__。</p>
+      <div class="cta-row" style="margin:14px 0 0">
+        <a class="btn-primary" href="/chat">开始对话</a>
+        <a class="btn" href="/platform">开放平台</a>
+      </div>
+    </div>
+  </section>
+
+  <section class="sec card">
+    <h2>架构</h2>
+    <p class="sub">客户端发送标准请求，经 DeepSink 网关完成鉴权、限流与路由，再由模型端点返回结果。</p>
+    <div class="flow">
+      <span class="node">客户端 · SDK · MC 模组</span><span class="arw">→</span>
+      <span class="node brand">DeepSink<br><small>API 网关</small></span><span class="arw">→</span>
+      <span class="node">模型端点</span>
+    </div>
+    <p class="sub" style="margin:14px 0 0">接入方无需关心后端差异——换协议、换模型都只在网关侧完成。</p>
+  </section>
+
+  <div class="foot">DeepSink · 大模型 API 平台 · <a href="/docs">接入文档</a> · <a href="/status">服务状态</a> · <a href="/platform">开放平台</a></div>
+</div>
+
+<script src="/assets/app.js"></script>
+<script>
+navAuth().then(u=>{
+  if(!u) return;
+  apiGet("/api/account").then(d=>{
+    const b2 = document.getElementById("bal2");
+    if (b2) b2.textContent = money(d.account.balance, "__CURRENCY__", 2);
+  }).catch(()=>{});
+});
+// HUD：探测 /health 延迟
+(function ping(){
+  const t0 = performance.now();
+  fetch("/health").then(r=>r.json()).then(()=>{
+    const el = document.getElementById("lat");
+    if (el) el.textContent = Math.round(performance.now()-t0) + " ms";
+  }).catch(()=>{});
+  setTimeout(ping, 5000);
+})();
+</script>
+</body>
+</html>

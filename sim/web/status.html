@@ -1,0 +1,107 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>DeepSink · 服务状态</title>
+<link rel="icon" href="/assets/favicon.svg">
+<link rel="stylesheet" href="/assets/style.css">
+</head>
+<body>
+<nav class="nav"><div class="nav-in">
+  <a class="brand" href="/"><span class="logo">DS</span> DeepSink</a>
+  <div class="nav-links">
+    <a href="/">官网</a>
+    <a href="/chat">对话</a>
+    <a href="/platform">开放平台</a>
+    <a href="/docs">文档</a>
+    <a class="on" href="/status">状态</a>
+  </div>
+  <div class="spacer"></div>
+  <span id="navauth"></span>
+</div></nav>
+
+<div class="wrap">
+  <div class="hero">
+    <h1>服务状态</h1>
+    <p>实时展示 DeepSink 各组件可用性与模型端点状态。</p>
+  </div>
+
+  <div class="card status-head" id="banner">
+    <span class="dot"></span>
+    <div>
+      <b id="banner-t">正在检测…</b>
+      <div class="sub" id="banner-s">连接到 <code>__HOST_PORT__</code></div>
+    </div>
+    <div class="spacer"></div>
+    <span class="small muted" id="checked">—</span>
+  </div>
+
+  <div class="grid g4" style="margin-top:16px">
+    <div class="card stat"><div class="l">服务可用性</div><div class="n" id="s-up">—</div></div>
+    <div class="card stat"><div class="l">API 延迟</div><div class="n" id="s-lat">—</div></div>
+    <div class="card stat"><div class="l">账户数</div><div class="n" id="s-acc">—</div></div>
+    <div class="card stat"><div class="l">协议</div><div class="n small" id="s-proto">—</div></div>
+  </div>
+
+  <div class="card" style="margin-top:16px">
+    <h2>模型端点</h2>
+    <p class="sub">当前目录中的模型（<code>GET /v1/models</code>）。</p>
+    <table>
+      <thead><tr><th>模型</th><th>状态</th><th>端点</th></tr></thead>
+      <tbody id="models"><tr><td colspan="3" class="muted">加载中…</td></tr></tbody>
+    </table>
+  </div>
+
+  <div class="card" style="margin-top:16px">
+    <h2>接入端点</h2>
+    <div class="kv">
+      <div class="k">OpenAI Base</div><div><code>__BASE_URL__</code></div>
+      <div class="k">Anthropic Base</div><div><code>__A_BASE_URL__</code></div>
+      <div class="k">健康检查</div><div><code>__A_BASE_URL__/health</code></div>
+    </div>
+  </div>
+
+  <div class="foot">DeepSink · 大模型 API 平台 · 服务状态</div>
+</div>
+
+<script src="/assets/app.js"></script>
+<script>
+function setBanner(ok){
+  const b = document.getElementById("banner");
+  b.classList.toggle("ok", ok);
+  b.classList.toggle("bad", !ok);
+  document.getElementById("banner-t").textContent = ok ? "所有系统正常运行" : "服务不可用";
+  document.getElementById("banner-s").innerHTML = ok ? "OpenAI · Anthropic 端点均已响应" : "无法连接到服务端点";
+}
+async function probe(){
+  const t0 = performance.now();
+  try{
+    const r = await fetch("/health", { cache: "no-store" });
+    if(!r.ok) throw new Error("HTTP " + r.status);
+    const j = await r.json();
+    const ms = Math.round(performance.now() - t0);
+    setBanner(true);
+    document.getElementById("s-up").textContent = "100%";
+    document.getElementById("s-lat").textContent = ms + " ms";
+    document.getElementById("s-acc").textContent = num(j.accounts);
+    document.getElementById("s-proto").textContent = (j.protocols || ["openai","anthropic"]).join(" · ");
+    const ids = j.models || (j.model ? [j.model] : []);
+    document.getElementById("models").innerHTML = ids.map(id => `<tr>
+      <td class="mono">${esc(id)}</td>
+      <td>${badge("可用","ok")}</td>
+      <td class="mono small muted">/v1/chat/completions · /v1/messages</td></tr>`).join("")
+      || `<tr><td colspan="3" class="muted">目录为空</td></tr>`;
+    const d = new Date();
+    const p = x => String(x).padStart(2,"0");
+    document.getElementById("checked").textContent =
+      `最近检测 ${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`;
+  }catch(e){
+    setBanner(false);
+    document.getElementById("s-up").textContent = "0%";
+  }
+}
+navAuth(); probe(); setInterval(() => { if(!document.hidden) probe(); }, 8000);
+</script>
+</body>
+</html>

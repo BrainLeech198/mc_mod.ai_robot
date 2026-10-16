@@ -2,7 +2,7 @@
 """启动 AI 专用 Minecraft 客户端（minecraft-launcher-lib 版）。
 
 版本/库文件读自 PCL2 的 .minecraft（只读）；游戏目录指向 mc_robot/instance；
-账号 DeekSeek 离线登录，启动后自动连服务器。
+账号 DeepSeek 离线登录，启动后自动连服务器。
 """
 import os
 import subprocess
@@ -16,7 +16,7 @@ INSTANCE_DIR = os.path.join(WORKSPACE, "instance")
 MC_DIR = r"D:\Game\PCL 2\.minecraft"
 JAVA = r"C:\Program Files\Java\jdk-17.0.12\bin\java.exe"
 
-USERNAME = "DeekSeek"
+USERNAME = "DeepSeek"
 MEMORY = "4G"
 SERVER = "play.simpfun.cn"
 PORT = "15685"

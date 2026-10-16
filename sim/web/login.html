@@ -1,0 +1,95 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>DeepSink · 登录</title>
+<link rel="icon" href="/assets/favicon.svg">
+<link rel="stylesheet" href="/assets/style.css">
+</head>
+<body>
+<nav class="nav"><div class="nav-in">
+  <a class="brand" href="/"><span class="logo">DS</span> DeepSink</a>
+  <div class="nav-links">
+    <a href="/">官网</a>
+    <a href="/chat">对话</a>
+    <a href="/platform">开放平台</a>
+    <a href="/docs">文档</a>
+  </div>
+  <div class="spacer"></div>
+  <span class="pill">账户系统</span>
+</div></nav>
+
+<div class="wrap">
+  <div class="authwrap">
+    <div class="card authcard">
+      <div class="authtabs">
+        <button id="tab-login" class="on" onclick="tab('login')">登录</button>
+        <button id="tab-reg" onclick="tab('reg')">注册</button>
+      </div>
+
+      <form id="f-login" onsubmit="return false">
+        <label class="fld">邮箱</label>
+        <input type="email" id="l-email" placeholder="you@example.com" autocomplete="username">
+        <label class="fld">密码</label>
+        <input type="password" id="l-pass" placeholder="••••••" autocomplete="current-password">
+        <button class="primary block" onclick="doLogin()">登录</button>
+      </form>
+
+      <form id="f-reg" onsubmit="return false" style="display:none">
+        <label class="fld">邮箱</label>
+        <input type="email" id="r-email" placeholder="you@example.com" autocomplete="username">
+        <label class="fld">昵称（可选）</label>
+        <input type="text" id="r-name" placeholder="怎么称呼你">
+        <label class="fld">密码（至少 6 位）</label>
+        <input type="password" id="r-pass" placeholder="••••••" autocomplete="new-password">
+        <button class="primary block" onclick="doRegister()">注册并登录</button>
+        <p class="sub" style="margin-top:10px">注册即赠送 <b>¥10.00</b> 体验额度。</p>
+      </form>
+
+      <p class="sub" style="margin-top:14px">
+        账户与余额加密存储；登录后即可创建 API 密钥并开始调用。
+      </p>
+    </div>
+  </div>
+  <div class="foot">DeepSink · 大模型 API 平台 · 密钥请到 <a href="/platform">开放平台</a> 创建。</div>
+</div>
+
+<script src="/assets/app.js"></script>
+<script>
+function tab(which) {
+  const isLogin = which === "login";
+  $("#f-login").style.display = isLogin ? "" : "none";
+  $("#f-reg").style.display = isLogin ? "none" : "";
+  $("#tab-login").classList.toggle("on", isLogin);
+  $("#tab-reg").classList.toggle("on", !isLogin);
+}
+// 只允许站内路径，挡 open redirect（禁止 //evil.com 这类协议相对跳转）
+const NEXT = (() => {
+  const n = new URLSearchParams(location.search).get("next") || "/platform";
+  return (n.startsWith("/") && !n.startsWith("//")) ? n : "/platform";
+})();
+function go() { location.href = NEXT; }
+async function doLogin() {
+  const email = $("#l-email").value.trim(), password = $("#l-pass").value;
+  if (!email || !password) return toast("请填写邮箱和密码");
+  try {
+    await apiPost("/api/auth/login", { email, password });
+    toast("登录成功"); go();
+  } catch (e) { toast("登录失败：" + e.message); }
+}
+async function doRegister() {
+  const email = $("#r-email").value.trim(), name = $("#r-name").value.trim(), password = $("#r-pass").value;
+  if (!email || !password) return toast("请填写邮箱和密码");
+  if (password.length < 6) return toast("密码至少 6 位");
+  try {
+    await apiPost("/api/auth/register", { email, name, password });
+    toast("注册成功"); go();
+  } catch (e) { toast("注册失败：" + e.message); }
+}
+$("#l-pass").addEventListener("keydown", e => { if (e.key === "Enter") doLogin(); });
+$("#r-pass").addEventListener("keydown", e => { if (e.key === "Enter") doRegister(); });
+apiMe().then(u => { if (u) location.href = NEXT; });
+</script>
+</body>
+</html>

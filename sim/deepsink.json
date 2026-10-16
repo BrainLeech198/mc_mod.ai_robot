@@ -1,0 +1,95 @@
+{
+  "_说明": "本地「DeepSink」AI 服务平台配置。官网 + 网页版 + 开放平台 + 账户系统 + 额度计费。对外同时说 OpenAI 协议(/v1/chat/completions)与 Anthropic 协议(/v1/messages)。任何只认其中之一的 MC 模组/工具/SDK，把 base_url 指过来并带上平台签发的 key，就能调用模型。",
+  "host": "127.0.0.1",
+  "port": 8788,
+
+  "data_dir": "~/DeepSink",
+  "_data_dir": "账本目录：账户/会话/密钥/用量都落在这里的 deepsink.db（SQLite）。默认用户主目录下的 DeepSink/。",
+
+  "legacy_import_dir": "data",
+  "_legacy_import_dir": "首次启动若数据库为空，会把旧 JSON 账本（account.json/keys.json/apikey）从这里迁进一个「本机账户」（路径相对 sim/）。迁移只发生一次。",
+
+  "allowed_hosts": ["127.0.0.1", "localhost", "::1"],
+  "_allowed_hosts": "只接受这些 Host，防 DNS rebinding。要局域网共享再添加（并清楚风险）。",
+
+  "session": {
+    "cookie": "deepsink_session",
+    "ttl_seconds": 604800
+  },
+  "_session": "网页控制台登录会话：HttpOnly + SameSite=Strict Cookie，默认 7 天。",
+
+  "model_name": "deepsink-chat",
+  "_model_name": "默认模型名（未配置 models 时 /v1/models 返回它）。可改成客户端要求的名字。",
+
+  "models": [
+    {"id": "deepsink-chat", "owned_by": "deepsink", "context_window": 128000,
+     "max_output_tokens": 8192, "capabilities": ["chat", "stream", "tools"],
+     "description": "通用对话模型"},
+    {"id": "deepsink-reasoner", "owned_by": "deepsink", "context_window": 128000,
+     "max_output_tokens": 8192, "capabilities": ["chat", "reasoning", "stream"],
+     "description": "推理模型"}
+  ],
+  "_models": "对外模型目录：GET /v1/models 列出它们，GET /v1/models/{id} 取单个。可选字段 context_window/max_output_tokens/capabilities/description 会原样透传给客户端。",
+
+  "rate_limit": {
+    "rpm": 600,
+    "burst": 60
+  },
+  "_rate_limit": "按 API key 的令牌桶限流：每分钟补 rpm 个令牌、桶容量 burst。超限返回 429 + Retry-After。rpm=0 关闭。",
+
+  "login_throttle": {
+    "max_fails": 8,
+    "window_seconds": 300
+  },
+  "_login_throttle": "登录失败节流：同一邮箱 300 秒内失败 8 次后锁定，返回 429。max_fails=0 关闭。",
+
+  "stream": {
+    "chunk_chars": 4,
+    "delay_ms": 12
+  },
+  "_stream": "流式输出分片：每片 chunk_chars 个字符、间隔 delay_ms 毫秒，逐 token 输出（真实流式而非整段落一次）。",
+
+  "gateway": {
+    "_说明": "网关行为：让流式响应先于大脑回复就到达客户端，营造真模型的'手感'。ttft_ms=首片前的假 prefill 延迟；ping_ms=等大脑期间的保活间隔（OpenAI 发 SSE 注释行、Anthropic 发 ping 事件，都是真厂商同款手法）；patience_ms=等人肉大脑的上限，超过就删掉请求文件（防止迟到的回单写成没人要的孤儿文件）并改发兜底文案，客户端绝不干等到超时。patience_ms 必须小于 bridge.timeout_seconds。",
+    "ttft_ms": 400,
+    "ping_ms": 3000,
+    "patience_ms": 45000
+  },
+
+  "backend": "bridge",
+  "_backend": "bridge=把请求交给推理 worker(经 deepsink_brain.py 收/回单)；openai=透传到真 API(填 openai 段)；echo=本地回显(自测/无脑联调)。",
+
+  "bridge": {
+    "req_dir": "data/req",
+    "res_dir": "data/res",
+    "timeout_seconds": 120,
+    "poll_interval": 0.5,
+    "claim_ttl_seconds": 180,
+    "_claim_ttl_seconds": "worker 认领锁的超时秒数：超时视为该 worker 失联，可被其它 worker 抢占（开多个 AI 窗口并行接单时用）。默认取 timeout_seconds×1.5。",
+    "msg_file": "data/msgs.jsonl",
+    "_msg_file": "跨窗口黑板：追加式留言文件。`deepsink_brain.py say \"...\"` 写、`msgs` 读——多个 AI 窗口（哪怕不同厂商）靠它互相递话，如\"这单我接了\"\"这单是数学题，交给 doubao\"。",
+    "workers_file": "data/workers.json",
+    "_workers_file": "worker 心跳登记：`ping`（watch 启动/reply 成功时自动做）把 {worker: {last_seen, pid}} 写到这里；status 与 /api/bridge 据此显示\"在线窗口\"。",
+    "heartbeat_ttl_seconds": 90,
+    "_heartbeat_ttl_seconds": "心跳保鲜期：超过这么久没 ping 的 worker 视为窗口已关。watch/reply 都会自动 ping，一般不用手动干预。",
+    "fallback_text": "（服务暂时繁忙，请稍后再试）"
+  },
+
+  "openai": {
+    "_reserved": "预留：以后接真 API 用。api_key 从环境变量读(默认 MCROBOT_LLM_KEY)，不写进本文件。把 backend 改成 'openai' 即启用。DeepSeek 示例：base_url=https://api.deepseek.com/v1, model=deepseek-chat。",
+    "base_url": "",
+    "api_key_env": "MCROBOT_LLM_KEY",
+    "model": ""
+  },
+
+  "billing": {
+    "_说明": "额度计费。额度单位人民币(CNY)。价格按『每 1000 token』计；token 用字符数/1.6 粗估。余额 <= 0 时拒绝请求(HTTP 402)。",
+    "enabled": true,
+    "currency": "CNY",
+    "initial_balance": 10.0,
+    "_initial_balance": "注册赠送额度。",
+    "price_per_1k_input": 0.002,
+    "price_per_1k_output": 0.008,
+    "chars_per_token": 1.6
+  }
+}

@@ -1,0 +1,84 @@
+{
+  "_说明": "聊天指挥通道行为配置。触发词、危险操作授权、抽样听策略、大脑选型。改完存盘即生效（循环每次读配置）。",
+  "nickname": "DeepSeek",
+  "summon": {
+    "_说明": "怎么算「在叫机器人」：提及名字 或 以某个前缀开头。",
+    "mention": true,
+    "prefixes": [
+      "!ds",
+      "!d"
+    ]
+  },
+  "auth": {
+    "_说明": "危险操作白名单：只有这些玩家能让机器人执行危险操作（改世界 / 权限 / 管理）。另外，靠「附近聆听」听到的话不算点名，这类消息里的指令（含 WorldEdit / 斜杠命令）也只认白名单内的人，其余一律婉拒——避免路人站在旁边就把它指挥走。",
+    "dangerous_allowed": [
+      "oahnuy198"
+    ]
+  },
+  "listen": {
+    "_说明": "附近聆听：不用 @，只要说话的人在身边就当在叫它。nearby_enabled=开启；radius_blocks=半径（格）；same_dim_only=只听同维度的人；cache_seconds=坐标缓存秒数；dim_cache_seconds=维度缓存秒数（维度不常变，缓存更久，省一次阻塞查询）。先算距离再查维度，远处的人只查一次位置。拿不到对方位置/维度时一律按「不在附近」处理。",
+    "nearby_enabled": true,
+    "radius_blocks": 24.0,
+    "same_dim_only": true,
+    "cache_seconds": 3.0,
+    "dim_cache_seconds": 30.0
+  },
+  "ambient": {
+    "_说明": "抽样听：没点名机器人、也不在附近的普通聊天。enabled=记录到 inbox；reply_probability=偶尔主动接话的概率；keywords=命中则必接。",
+    "enabled": true,
+    "reply_probability": 0.0,
+    "keywords": [
+      "DeepSeek"
+    ]
+  },
+  "brain": "bridge",
+  "_brain": "bridge=AI(Claude Code)/预留API 走 inbox-outbox 决策；rule=纯规则即时响应（默认，简单指令自己答）。",
+  "queue_all_summon": true,
+  "_queue_all_summon": "true=只要被召唤就把消息交给大脑（AI/API）决策，先回一句即时回执；false=简单问题由规则自己答（问候/报位置/查在线/帮助），其余才交给大脑。",
+  "reply_prefix": "",
+  "replies": {
+    "_说明": "即时回执池：被召唤后先应一声（随机选一句，{speaker}=对方名字），避免干等又不像复读机。",
+    "ack_pool": [
+      "收到，我想想。",
+      "嗯？等我瞅一眼。",
+      "哦？这事我看看。",
+      "收到，我琢磨琢磨。",
+      "在看了在看了。",
+      "嘶——我想一下。",
+      "嗯，稍等，脑子转一下。",
+      "看着呢，捋一捋。"
+    ]
+  },
+  "env_snapshot": true,
+  "_env_snapshot": "true=召唤入队时附环境快照（位置/在线玩家/背包摘要）给大脑，AI 按真实玩家视角回应。关掉可省两次只读指令。",
+  "sample_interval_seconds": 1.0,
+  "brain_timeout_seconds": 120.0,
+  "_brain_timeout_seconds": "交给大脑(桥/API)的召唤若超过这个秒数没回复，机器人自动兜底回一句，保证玩家不落空。",
+  "throttle": {
+    "_说明": "防刷屏。同一玩家同一内容在 dedup_window_seconds 内只处理一次；机器人每条消息之间至少 min_send_interval_seconds；连续对同一玩家自动回复（问候/快答/抽样接话）不超过 max_consecutive_auto_replies 条；距上次同人自动回复超过 chain_reset_seconds 则计数重置。授权执行的确认/拒绝不受条数上限限制。",
+    "dedup_window_seconds": 6.0,
+    "min_send_interval_seconds": 1.0,
+    "max_consecutive_auto_replies": 2,
+    "chain_reset_seconds": 10.0,
+    "conversation_window_seconds": 120.0
+  },
+  "paths": {
+    "_说明": "相对仓库根。",
+    "inbox": "instance/robot/inbox.jsonl",
+    "outbox": "instance/robot/outbox.jsonl",
+    "cursor": "instance/robot/cursor.json",
+    "log": "version/1.20.1-forge/logs/operations.jsonl"
+  },
+  "llm_api": {
+    "_说明": "L1 大脑（tools/brain_llm.py）的端点配置。api_key 从环境变量 MCROBOT_LLM_KEY 读，不写进本文件。启用方式：python tools/brain_llm.py watch（常驻）或 once（单批）；brain=bridge 时本段被忽略（Claude Code 在线接单）。当前 endpoint 指向本机 DeepSink 伪 API 服务（sim/，:8788）；以后换真 API 只改 endpoint + model + 换 key，代码不动。timeout_seconds 必须小于 brain_timeout_seconds(45)。长期记忆在 version/1.20.1-forge/memory/robot_memory.jsonl（按 MC 版本隔离），memory_events/memory_notes 控制注入提示词的条数。",
+    "enabled": false,
+    "provider": "openai-compatible",
+    "model": "deepsink-chat",
+    "endpoint": "http://127.0.0.1:8788/v1",
+    "timeout_seconds": 90,
+    "history_turns": 6,
+    "max_tokens": 300,
+    "memory_events": 8,
+    "memory_notes": 3
+  }
+}

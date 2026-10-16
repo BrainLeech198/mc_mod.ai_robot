@@ -1,21 +1,28 @@
 {
-  "_说明": "就绪清单。全部项 true 才允许 AI 启动进服。",
+  "_说明": "就绪清单。全部项 true 才允许 AI 启动进服。2026-10-16 逐项实测复核（此前 7 项全 false 是没人核对过，不是真没做）。",
   "version": "1.20.1-forge",
   "ready": false,
+  "_ready_说明": "仍为 false，两个卡项：workspace_bounds_set（建造区占位且与实际施工地不符）、opac_installed（真没装）。",
   "checklist": {
-    "config_filled": false,
-    "_config_filled": "config.json 里 TODO 已填（服务器地址、AI 游戏名、密码）",
-    "workspace_bounds_set": false,
-    "_workspace_bounds_set": "workspace.json 建造区坐标已按实际圈定",
-    "runtime_filled": false,
-    "_runtime_filled": "runtime.json 的 Java 路径、客户端实例目录已填",
-    "client_mods_installed": false,
-    "_client_mods_installed": "客户端 mods/ 装齐 26 个 yztc 客户端 mod",
-    "control_mod_installed": false,
-    "_control_mod_installed": "ControlMod 已装入客户端 mods/",
+    "config_filled": true,
+    "_config_filled": "已填：play.simpfun.cn:15685 / 账号 DeepSeek / 密码 / 皮肤 account/skin.png / SFTP 已填。",
+
+    "runtime_filled": true,
+    "_runtime_filled": "实测存在：Java C:\\Program Files\\Java\\jdk-17.0.12\\bin\\java.exe；客户端版本目录 D:\\Game\\PCL 2\\.minecraft\\versions\\1.20.1 野棕乡都市（launch_client.py 从这里取库文件，游戏目录指向仓库 instance/）。",
+
+    "client_mods_installed": true,
+    "_client_mods_installed": "实测 instance/mods/ 有 27 个 jar（mods.md 要求的 26 个 + ControlMod）。注意：PCL 实例目录下的 mods/ 有 37 个但缺 ControlMod——真正用的是仓库 instance/mods。",
+
+    "control_mod_installed": true,
+    "_control_mod_installed": "实测 instance/mods/mcrobot_control-0.1.0.jar 在；源码在 controlmod/，构建物在 controlmod/build/libs/。",
+
     "opac_installed": false,
-    "_opac_installed": "OPAC 已装服务端+客户端，且 AI 建造区已圈定",
-    "server_reachable": false,
-    "_server_reachable": "客户端能连上服务器并完成 yzt_super 登录"
+    "_opac_installed": "未装（客户端与服务端都没有 openpartiesandclaims 的 jar）。唯一「真没做」的项；双层防护目前只有第 1 层（AI 侧自律）。",
+
+    "server_reachable": true,
+    "_server_reachable": "TCP play.simpfun.cn:15685 可连；此前已完成 yzt_super 登录并进服。**但简幻欢服务器需手动开、地址端口会变**——每次开工前重新确认。",
+
+    "workspace_bounds_set": false,
+    "_workspace_bounds_set": "⚠ 仍是占位：world=minecraft:overworld、x/z 0..255，与实际施工地不符——机器人实际在 multiworld:ai 活动，第二所学校在 (-57,-47,-282)（z 为负，已越界）。边界一旦启用会把正常施工全拒掉，启用前必须先按实际活动区改写。"
   }
 }

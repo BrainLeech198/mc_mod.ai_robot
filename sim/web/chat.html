@@ -1,0 +1,175 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>DeepSink · 在线对话</title>
+<link rel="icon" href="/assets/favicon.svg">
+<link rel="stylesheet" href="/assets/style.css">
+</head>
+<body>
+<nav class="nav"><div class="nav-in">
+  <a class="brand" href="/"><span class="logo">DS</span> DeepSink</a>
+  <div class="nav-links">
+    <a href="/">官网</a>
+    <a class="on" href="/chat">对话</a>
+    <a href="/platform">开放平台</a>
+    <a href="/docs">文档</a>
+  </div>
+  <div class="spacer"></div>
+  <span id="navauth"></span>
+</div></nav>
+
+<div class="wrap">
+  <div class="banner" id="nobal">余额不足，请前往 <a href="/platform">开放平台</a> 充值后再试。</div>
+
+  <div class="chatwrap">
+    <aside class="side">
+      <button class="btn-primary" style="width:100%" onclick="newSession()">＋ 新建对话</button>
+      <div id="sessions" style="margin-top:12px"></div>
+      <hr>
+      <div class="small muted" style="line-height:1.7">
+        模型<br><code>__MODEL__</code><br>
+        通道 <span class="badge">会话</span>
+      </div>
+    </aside>
+
+    <main class="chat">
+      <div class="chat-h">
+        <b>DeepSink 对话</b>
+        <span class="badge" id="modelbadge">__MODEL__</span>
+        <div class="spacer"></div>
+        <select id="model" style="width:auto" title="模型">
+          <option value="__MODEL__">__MODEL__</option>
+          <option value="deepsink-reasoner">deepsink-reasoner</option>
+        </select>
+      </div>
+      <div class="chat-b" id="log"></div>
+      <div class="chat-f">
+        <textarea id="in" placeholder="给 DeepSink 发送消息（Enter 发送，Shift+Enter 换行）"></textarea>
+        <div class="chat-tools">
+          <button class="primary" id="sendbtn" onclick="send()">发送</button>
+          <label class="badge" style="cursor:pointer"><input type="checkbox" id="stream"> 流式</label>
+          <span class="spacer" style="flex:1"></span>
+          <span class="small muted" id="lastinfo"></span>
+        </div>
+      </div>
+    </main>
+  </div>
+
+  <div class="foot">
+    DeepSink 网页版：对话走会话鉴权（<code>/api/chat</code>），不暴露 API key；要接入自己的客户端请到
+    <a href="/platform">开放平台</a> 创建密钥。
+  </div>
+</div>
+
+<script src="/assets/app.js"></script>
+<script>
+const DEFMODEL = "__MODEL__", CUR = "__CURRENCY__";
+// 会话存本地；兼容旧的 ds_* 键（一次迁移）
+let sessions = JSON.parse(localStorage.getItem("deepsink_sessions") || localStorage.getItem("ds_sessions") || "[]");
+let curId = localStorage.getItem("deepsink_cur") || localStorage.getItem("ds_cur") || null;
+if (!sessions.length) newSession(true);
+
+function save(){ localStorage.setItem("deepsink_sessions", JSON.stringify(sessions)); localStorage.setItem("deepsink_cur", curId); }
+function cur(){ return sessions.find(s => s.id === curId) || sessions[0]; }
+function newSession(silent){
+  const s = { id: "s" + Date.now(), title: "新的对话", msgs: [], ts: Date.now() };
+  sessions.unshift(s); curId = s.id; save(); renderSessions(); renderMsgs();
+  if (!silent) $("#in").focus();
+}
+function pick(id){ curId = id; save(); renderSessions(); renderMsgs(); }
+function del(e, id){ e.stopPropagation(); sessions = sessions.filter(s => s.id !== id); if (!sessions.length) return newSession(true); if (curId === id) curId = sessions[0].id; save(); renderSessions(); renderMsgs(); }
+function renderSessions(){
+  $("#sessions").innerHTML = sessions.map(s =>
+    `<div class="sess ${s.id === curId ? "on" : ""}" onclick="pick('${s.id}')">
+       <span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(s.title)}</span>
+       <span onclick="del(event,'${s.id}')" title="删除" style="color:#aab">✕</span>
+     </div>`).join("");
+}
+function bubble(role, text, meta){
+  const d = document.createElement("div"); d.className = "msg " + (role === "user" ? "u" : "a");
+  d.innerHTML = `<div class="av">${role === "user" ? "你" : "DS"}</div>
+                 <div><div class="bub"></div><div class="meta"></div></div>`;
+  d.querySelector(".bub").textContent = text;
+  d.querySelector(".meta").textContent = meta || "";
+  $("#log").appendChild(d); $("#log").scrollTop = $("#log").scrollHeight; return d;
+}
+function renderMsgs(){
+  $("#log").innerHTML = "";
+  const s = cur();
+  if (!s.msgs.length){
+    bubble("assistant", "你好，我是 DeepSink。\n\n我会以 __MODEL__ 模型回复你的消息，每次对话都会记入用量并从账户额度中扣除。\n\n试试问我点东西吧。", "__MODEL__");
+  }
+  s.msgs.forEach(m => bubble(m.role, m.content, m.meta));
+}
+function refreshBal(){
+  apiGet("/api/account").then(d => {
+    const nb = document.getElementById("navbal");
+    if (nb) nb.textContent = money(d.account.balance, CUR, 2);
+    $("#nobal").classList.toggle("show", d.account.balance <= 0);
+  }).catch(()=>{});
+}
+async function send(){
+  const ta = $("#in"), text = ta.value.trim(); if (!text) return;
+  ta.value = "";
+  const s = cur();
+  if (s.msgs.length === 0) { s.title = text.slice(0, 18); renderSessions(); }
+  s.msgs.push({ role: "user", content: text }); save();
+  bubble("user", text);
+  const bot = bubble("assistant", "…");
+  const bub = bot.querySelector(".bub"), meta = bot.querySelector(".meta");
+  const model = $("#model").value || DEFMODEL;
+  const streaming = $("#stream").checked;
+  try {
+    const r = await fetch("/api/chat", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ model, stream: streaming, messages: s.msgs.map(m => ({ role: m.role, content: m.content })) })
+    });
+    if (r.status === 401) { location.href = "/login?next=" + encodeURIComponent("/chat"); return; }
+    if (r.status === 402) { bub.textContent = "⚠ 余额不足（HTTP 402 insufficient_quota）。请到开放平台充值。"; $("#nobal").classList.add("show"); return; }
+    if (!r.ok) { const t = await r.text(); bub.textContent = "请求失败：HTTP " + r.status + "\n" + t; return; }
+    if (!streaming) {
+      const j = await r.json();
+      const answer = j.reply ?? "(空)";
+      bub.textContent = answer;
+      const u = j.usage || {};
+      meta.textContent = `${j.model} · in ${u.prompt_tokens||0} / out ${u.completion_tokens||0} tok · 花费 ${money(j.billing?.cost, CUR)}`;
+      s.msgs.push({ role: "assistant", content: answer, meta: meta.textContent }); save();
+      refreshBal();
+      return;
+    }
+    bub.textContent = "";
+    const reader = r.body.getReader(), dec = new TextDecoder(); let buf = "", full = "", usage = null;
+    while (true) {
+      const { value, done } = await reader.read(); if (done) break;
+      buf += dec.decode(value, { stream: true });
+      const parts = buf.split("\n"); buf = parts.pop();
+      for (const line of parts) {
+        const t = line.trim(); if (!t.startsWith("data:")) continue;
+        const data = t.slice(5).trim(); if (data === "[DONE]") continue;
+        try {
+          const j = JSON.parse(data); const d = j.choices?.[0]?.delta;
+          if (d && d.content) { full += d.content; bub.textContent = full; $("#log").scrollTop = $("#log").scrollHeight; }
+          if (j.usage) usage = j.usage;
+        } catch (e) {}
+      }
+    }
+    if (!full) bub.textContent = "(空)";
+    meta.textContent = `流式 · ${usage ? `in ${usage.prompt_tokens} / out ${usage.completion_tokens} tok` : ""}`;
+    s.msgs.push({ role: "assistant", content: full, meta: meta.textContent }); save();
+    refreshBal();
+  } catch (e) {
+    bub.textContent = "请求失败：" + e;
+  }
+}
+$("#in").addEventListener("keydown", e => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(); } });
+$("#in").addEventListener("input", function(){ this.style.height = "auto"; this.style.height = Math.min(160, this.scrollHeight) + "px"; });
+renderSessions(); renderMsgs();
+apiMe().then(u => {
+  if (!u) { location.href = "/login?next=" + encodeURIComponent("/chat"); return; }
+  navAuth(); refreshBal();
+});
+</script>
+</body>
+</html>

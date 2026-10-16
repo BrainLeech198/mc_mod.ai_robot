@@ -1,0 +1,112 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>MC 接入 AI · 封装 Agent 控制台</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header>
+  <div class="brand">MC 接入 AI <span class="sub">封装 Agent 控制台</span></div>
+  <div class="client-bar">
+    <label>版本（=一份 AI 身份）</label>
+    <select id="clientSel"></select>
+    <button id="btnUse">切换</button>
+  </div>
+  <div class="lights">
+    <span class="light" id="l-body">身体</span>
+    <span class="light" id="l-game">游戏</span>
+    <span class="light" id="l-brain">大脑</span>
+    <span class="light" id="l-api">后端</span>
+  </div>
+</header>
+
+<main>
+  <!-- 左：身份 -->
+  <section class="col">
+    <h2>身份（version/<span id="p-ver"></span>/identity.md）</h2>
+    <div class="row"><span class="k">名字</span><span id="p-name" class="v"></span></div>
+
+    <h3>后端</h3>
+    <label>模板</label>
+    <select id="bePreset"></select>
+    <label>端点 endpoint</label>
+    <input id="beEndpoint" placeholder="http://127.0.0.1:8788/v1">
+    <label>模型 model</label>
+    <input id="beModel" placeholder="deepsink-chat">
+    <label>Key 环境变量名</label>
+    <input id="beKeyEnv" placeholder="MCROBOT_LLM_KEY">
+    <label>API key <span class="hint" id="keyHint"></span></label>
+    <div class="row">
+      <input id="keyInput" type="password" placeholder="留空则本机服务免鉴权">
+      <button id="btnKey">保存</button>
+    </div>
+    <div class="hint" id="keyState"></div>
+    <div class="hint" id="beProbe"></div>
+
+    <h3>元信息</h3>
+    <textarea id="p-meta" rows="4"></textarea>
+    <h3>人格</h3>
+    <textarea id="p-persona" rows="8"></textarea>
+    <h3>世界常识（手写，一行一条）</h3>
+    <textarea id="p-facts" rows="6"></textarea>
+    <div class="btns">
+      <button id="btnSave">保存到 identity.md</button>
+      <span class="hint" id="saveHint"></span>
+    </div>
+
+    <h3>自动来源（只读，改文档即生效）</h3>
+    <pre id="auto" class="out"></pre>
+  </section>
+
+  <!-- 中：对话 -->
+  <section class="col wide">
+    <h2>对话流 <span class="hint" id="queueHint"></span></h2>
+    <div id="feed" class="feed"></div>
+    <div class="composer">
+      <input id="sayInput" placeholder="代机器人说一句话…">
+      <button id="btnSay">发话</button>
+      <input id="cmdInput" placeholder="/list">
+      <button id="btnCmd" class="ghost">发指令</button>
+    </div>
+    <div class="composer">
+      <input id="askInput" placeholder="直接问 AI（走完整提示词）…">
+      <button id="btnAsk">问</button>
+      <label class="chk"><input id="askSend" type="checkbox"> 回复写回游戏</label>
+      <button id="btnBrain" class="ghost">启动 L1 大脑</button>
+    </div>
+    <pre id="askOut" class="out"></pre>
+  </section>
+
+  <!-- 右：提示词 / 查方块 / 日志 -->
+  <section class="col">
+    <h2>自动拼装的提示词</h2>
+    <div class="row">
+      <input id="pvText" placeholder="模拟玩家说：在吗" value="在吗">
+      <button id="btnPreview">预览</button>
+    </div>
+    <pre id="preview" class="out tall"></pre>
+
+    <h2>查方块（方块目录.md）</h2>
+    <div class="row">
+      <input id="blkInput" placeholder="desk / chair / lamp / rubbish_bin">
+      <button id="btnBlk">查</button>
+    </div>
+    <pre id="blkOut" class="out"></pre>
+
+    <h2>日志</h2>
+    <div class="row">
+      <select id="logSel">
+        <option value="brain_llm">brain_llm</option>
+        <option value="robot">robot（身体）</option>
+        <option value="bridge">bridge（桥接大脑）</option>
+      </select>
+      <button id="btnLog">刷新</button>
+    </div>
+    <pre id="logs" class="out tall"></pre>
+  </section>
+</main>
+
+<script src="app.js"></script>
+</body>
+</html>

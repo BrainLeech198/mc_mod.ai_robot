@@ -1,0 +1,283 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>DeepSink 开放平台</title>
+<link rel="icon" href="/assets/favicon.svg">
+<link rel="stylesheet" href="/assets/style.css">
+</head>
+<body>
+<nav class="nav"><div class="nav-in">
+  <a class="brand" href="/"><span class="logo">DS</span> DeepSink <span class="muted small" style="font-weight:400">开放平台</span></a>
+  <div class="nav-links">
+    <a href="/">官网</a>
+    <a href="/chat">对话</a>
+    <a class="on" href="/platform">开放平台</a>
+    <a href="/docs">文档</a>
+  </div>
+  <div class="spacer"></div>
+  <span id="navauth"></span>
+</div></nav>
+
+<div class="wrap">
+  <div class="hero">
+    <h1>控制台</h1>
+    <p>管理 API 密钥、查看用量与流水、充值额度。同时兼容 OpenAI 与 Anthropic 两套协议。</p>
+  </div>
+
+  <div class="grid g4">
+    <div class="card stat"><div class="l">账户余额</div><div class="n" id="s-bal">—</div></div>
+    <div class="card stat"><div class="l">累计消费</div><div class="n" id="s-cost">—</div></div>
+    <div class="card stat"><div class="l">请求数</div><div class="n" id="s-req">—</div></div>
+    <div class="card stat"><div class="l">累计 Tokens</div><div class="n" id="s-tok">—</div></div>
+  </div>
+
+  <div class="grid g2" style="margin-top:16px">
+    <div class="card">
+      <h2>接入信息</h2>
+      <p class="sub">任何 OpenAI 兼容的客户端 / MC 模组按下面填写即可。密钥在下方列表创建。</p>
+      <div class="kv">
+        <div class="k">OpenAI Base</div>
+        <div class="copybar"><code id="base">__BASE_URL__</code><button class="ghost" onclick="copy($('#base').textContent)">复制</button></div>
+        <div class="k">Anthropic Base</div>
+        <div class="copybar"><code id="abase">__A_BASE_URL__</code><button class="ghost" onclick="copy($('#abase').textContent)">复制</button></div>
+        <div class="k">模型</div>
+        <div><code>__MODEL__</code></div>
+        <div class="k">账户</div>
+        <div id="who">—</div>
+      </div>
+      <pre>curl __BASE_URL__/chat/completions \
+  -H "Authorization: Bearer $DEEPSINK_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"model":"__MODEL__","messages":[{"role":"user","content":"你好"}]}'</pre>
+    </div>
+
+    <div class="card">
+      <h2>额度充值</h2>
+      <p class="sub">沙箱环境：选择或输入金额，点击即到账。</p>
+      <div class="recharge-btns">
+        <button onclick="recharge(10)">¥10</button>
+        <button onclick="recharge(50)">¥50</button>
+        <button onclick="recharge(100)">¥100</button>
+        <button onclick="recharge(500)">¥500</button>
+      </div>
+      <label class="fld">自定义金额（元）</label>
+      <div class="row">
+        <input class="grow" type="number" id="amt" min="0.01" step="0.01" placeholder="例如 20">
+        <button class="primary" onclick="rechargeCustom()">充值</button>
+      </div>
+      <hr>
+      <div class="kv small">
+        <div class="k">计费</div><div>输入 ¥0.002 / 1K tok，输出 ¥0.008 / 1K tok</div>
+        <div class="k">初始赠送</div><div>¥10.00</div>
+        <div class="k">余额不足</div><div>接口返回 <code>402 insufficient_quota</code></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="card" style="margin-top:16px">
+    <div class="row"><h2 style="margin:0">API 密钥</h2><div class="spacer"></div>
+      <input type="text" id="kname" placeholder="密钥名称（可选）" style="width:200px">
+      <button class="primary" onclick="createKey()">创建密钥</button>
+    </div>
+    <div class="newkey" id="newkey">
+      <b>已创建，请立即保存（仅显示一次）：</b>
+      <div class="copybar" style="margin-top:8px"><code id="newkeyval"></code>
+        <button class="ghost" onclick="copy($('#newkeyval').textContent)">复制</button></div>
+    </div>
+    <table style="margin-top:12px">
+      <thead><tr><th>名称</th><th>密钥</th><th>状态</th><th>请求</th><th>Tokens</th><th>消费</th><th>创建</th><th></th></tr></thead>
+      <tbody id="keys"></tbody>
+    </table>
+  </div>
+
+  <div class="card" style="margin-top:16px">
+    <div class="row"><h2 style="margin:0">推理队列（bridge）</h2><div class="spacer"></div>
+      <span id="br-badge"></span></div>
+    <p class="sub">后端为 <code>bridge</code> 时，请求进入队列、由推理 worker 认领作答。可<b>并排开多个 worker</b>（多个窗口各跑 <code>python deepsink_brain.py watch</code>）并行接单——认领用原子锁，同一条请求只会被一个 worker 接走。</p>
+    <div class="grid g4" style="margin:12px 0">
+      <div class="card stat"><div class="l">待认领</div><div class="n" id="br-pend">—</div></div>
+      <div class="card stat"><div class="l">处理中</div><div class="n" id="br-claim">—</div></div>
+      <div class="card stat"><div class="l">已回复</div><div class="n" id="br-ans">—</div></div>
+      <div class="card stat"><div class="l">在线窗口</div><div class="n" id="br-online">—</div></div>
+    </div>
+    <table>
+      <thead><tr><th>Worker</th><th>处理中</th><th>最新请求</th></tr></thead>
+      <tbody id="br-list"></tbody>
+    </table>
+    <p class="sub small" id="br-online-list" style="margin-top:8px"></p>
+    <p class="sub small" id="br-hint" style="margin-top:8px"></p>
+  </div>
+
+  <div class="grid g2" style="margin-top:16px">
+    <div class="card">
+      <h2>修改密码</h2>
+      <p class="sub">改密后会自动踢出其它登录设备（当前会话保留）。</p>
+      <label class="fld">当前密码</label>
+      <input type="password" id="pw-old" autocomplete="current-password">
+      <label class="fld">新密码（至少 6 位）</label>
+      <input type="password" id="pw-new" autocomplete="new-password">
+      <button class="primary" style="margin-top:12px" onclick="changePw()">更新密码</button>
+    </div>
+    <div class="card">
+      <div class="row"><h2 style="margin:0">登录会话</h2><div class="spacer"></div>
+        <button class="ghost danger" onclick="revokeAll()">踢出其它设备</button></div>
+      <p class="sub">登录过的浏览器会话（Cookie），可单独踢出。</p>
+      <table>
+        <thead><tr><th>会话</th><th>登录时间</th><th>到期</th><th></th></tr></thead>
+        <tbody id="sessions"></tbody>
+      </table>
+    </div>
+  </div>
+
+  <div class="grid g2" style="margin-top:16px">
+    <div class="card">
+      <h2>用量明细</h2>
+      <p class="sub">最近 50 次调用。</p>
+      <table>
+        <thead><tr><th>时间</th><th>模型</th><th>输入</th><th>输出</th><th>花费</th><th>后端</th></tr></thead>
+        <tbody id="usage"></tbody>
+      </table>
+    </div>
+    <div class="card">
+      <h2>额度流水</h2>
+      <p class="sub">充值 / 消费 / 注册赠送。</p>
+      <table>
+        <thead><tr><th>时间</th><th>类型</th><th>变动</th><th>余额</th><th>说明</th></tr></thead>
+        <tbody id="ledger"></tbody>
+      </table>
+    </div>
+  </div>
+
+  <div class="foot">DeepSink · 开放平台控制台</div>
+</div>
+
+<script src="/assets/app.js"></script>
+<script>
+const CUR = "__CURRENCY__";
+const KIND = { signup_bonus: "注册赠送", recharge: "充值", charge: "消费" };
+
+async function load(){
+  const u = await requireLogin();
+  if (!u) return;
+  $("#who").textContent = `${u.name} <${u.email}>`;
+  try{
+    const a = await apiGet("/api/account");
+    const b = a.account.balance, st = a.stats;
+    $("#s-bal").textContent = money(b, CUR, 2);
+    $("#s-cost").textContent = money(st.cost_total, CUR, 4);
+    $("#s-req").textContent = num(st.requests);
+    $("#s-tok").textContent = num(st.tokens);
+  }catch(e){ toast("读取账户失败："+e.message); }
+  try{ renderKeys((await apiGet("/api/keys")).keys); }catch(e){}
+  try{ renderUsage((await apiGet("/api/usage?limit=50")).usage); }catch(e){}
+  try{ renderLedger((await apiGet("/api/ledger")).ledger); }catch(e){}
+  try{ await loadSessions(); }catch(e){}
+  try{ await loadBridge(); }catch(e){}
+}
+async function loadBridge(){
+  const b = (await apiGet("/api/bridge")).bridge;
+  $("#br-pend").textContent = num(b.pending.length);
+  $("#br-claim").textContent = num(b.claimed.length);
+  $("#br-ans").textContent = num(b.answered);
+  $("#br-workers").textContent = num(b.workers.length);
+  $("#br-online").textContent = num((b.online || []).length);
+  $("#br-online-list").textContent = (b.online || []).length
+    ? "在线窗口：" + b.online.map(w => `${w.worker}（${w.age_seconds}s 前心跳）`).join("、")
+    : "暂无在线窗口（watch 启动 / reply 成功会自动登记）";
+  $("#br-badge").innerHTML = b.active ? badge("队列正常","ok") : badge("队列未启用","off");
+  $("#br-list").innerHTML = b.workers.map(w => `<tr>
+    <td class="mono">${esc(w.worker)}</td>
+    <td class="mono">${num(w.claimed)}</td>
+    <td class="mono small muted">${esc(w.last_id)}</td></tr>`).join("")
+    || `<tr><td colspan="3" class="muted">当前没有 worker 在接单（另开窗口跑 deepsink_brain.py watch）</td></tr>`;
+  $("#br-hint").textContent = b.hint || "";
+}
+function renderKeys(keys){
+  $("#keys").innerHTML = keys.map(k => `<tr>
+    <td><b>${esc(k.name)}</b></td>
+    <td class="mono">${esc(k.key_masked)}</td>
+    <td>${k.enabled ? badge("启用","ok") : badge("已禁用","off")}</td>
+    <td class="mono">${num(k.requests)}</td>
+    <td class="mono">${num(k.tokens)}</td>
+    <td class="mono">${money(k.cost, CUR, 4)}</td>
+    <td class="small muted">${fmtTime(k.created)}</td>
+    <td style="white-space:nowrap">
+      <button class="ghost" onclick="toggleKey('${k.id}',${!k.enabled})">${k.enabled?"禁用":"启用"}</button>
+      <button class="ghost danger" onclick="delKey('${k.id}')">删除</button>
+    </td></tr>`).join("") || `<tr><td colspan="8" class="muted">还没有密钥</td></tr>`;
+}
+function renderUsage(us){
+  $("#usage").innerHTML = us.map(u => `<tr>
+    <td class="small muted">${fmtTime(u.ts)}</td>
+    <td class="mono">${esc(u.model)}</td>
+    <td class="mono">${num(u.prompt_tokens)}</td>
+    <td class="mono">${num(u.completion_tokens)}</td>
+    <td class="mono">${money(u.cost, CUR, 4)}</td>
+    <td>${badge(u.backend || "-")}</td></tr>`).join("") || `<tr><td colspan="6" class="muted">还没有调用记录</td></tr>`;
+}
+function renderLedger(ls){
+  $("#ledger").innerHTML = ls.map(l => {
+    const pos = l.amount >= 0;
+    return `<tr>
+      <td class="small muted">${fmtTime(l.ts)}</td>
+      <td>${badge(KIND[l.kind] || l.kind)}</td>
+      <td class="mono ${pos?"pos":"neg"}">${pos?"+":""}${money(l.amount, CUR, 4)}</td>
+      <td class="mono">${money(l.balance_after, CUR, 2)}</td>
+      <td class="small muted">${esc(l.note || "")}</td></tr>`;
+  }).join("") || `<tr><td colspan="5" class="muted">还没有流水</td></tr>`;
+}
+async function recharge(n){
+  try{ await apiPost("/api/recharge",{amount:n}); toast("充值成功 +¥"+n); load(); }
+  catch(e){ toast("充值失败："+e.message); }
+}
+function rechargeCustom(){
+  const v = parseFloat($("#amt").value);
+  if(!v || v<=0) return toast("请输入有效金额");
+  recharge(v); $("#amt").value="";
+}
+async function createKey(){
+  try{
+    const r = await apiPost("/api/keys",{name:$("#kname").value.trim()});
+    $("#kname").value="";
+    $("#newkeyval").textContent = r.key.key;
+    $("#newkey").classList.add("show");
+    toast("已创建密钥"); load();
+  }catch(e){ toast("创建失败："+e.message); }
+}
+async function toggleKey(id,enabled){
+  try{ await apiPost("/api/keys/toggle",{id,enabled}); load(); }catch(e){ toast(e.message); }
+}
+async function delKey(id){
+  if(!confirm("确定删除这个密钥？使用它的客户端将立即失效。")) return;
+  try{ await apiPost("/api/keys/delete",{id}); toast("已删除"); load(); }catch(e){ toast(e.message); }
+}
+function renderSessions(ss){
+  $("#sessions").innerHTML = ss.map(s => `<tr>
+    <td class="mono">${esc(s.id.slice(0,8))} ${s.current?badge("当前","ok"):""}</td>
+    <td class="small muted">${fmtTime(s.created)}</td>
+    <td class="small muted">${fmtTime(s.expires)}</td>
+    <td>${s.current?"":`<button class="ghost danger" onclick="revokeSession('${s.id}')">踢出</button>`}</td>
+  </tr>`).join("") || `<tr><td colspan="4" class="muted">没有会话</td></tr>`;
+}
+async function loadSessions(){ try{ renderSessions((await apiGet("/api/sessions")).sessions); }catch(e){} }
+async function changePw(){
+  const o=$("#pw-old").value, n=$("#pw-new").value;
+  if(!o||!n) return toast("请填写当前与新密码");
+  if(n.length<6) return toast("新密码至少 6 位");
+  try{
+    await apiPost("/api/account/password",{old:o,new:n});
+    $("#pw-old").value=""; $("#pw-new").value="";
+    toast("密码已更新，其它设备已下线"); load();
+  }catch(e){ toast("改密失败："+e.message); }
+}
+async function revokeSession(id){ try{ await apiPost("/api/sessions/revoke",{id}); toast("已踢出"); loadSessions(); }catch(e){ toast(e.message); } }
+async function revokeAll(){
+  if(!confirm("踢出所有其它登录设备？")) return;
+  try{ await apiPost("/api/sessions/revoke",{all:true}); toast("已踢出其它设备"); loadSessions(); }catch(e){ toast(e.message); }
+}
+navAuth(); load(); setInterval(() => { if (!document.hidden) load(); }, 10000);
+</script>
+</body>
+</html>

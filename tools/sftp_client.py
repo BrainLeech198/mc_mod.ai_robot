@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """简幻欢 SFTP 服务器文件管理工具（paramiko）。
 
-只读侦查命令：ls / tree / get / du；put 用于经用户明确授权后的文件上传。
+只读侦查命令：ls / tree / get / du；put（上传）/ mv（改名）仅在用户明确授权后使用。
 删除不提供。凭据读自 version/1.20.1-forge/config.json 的 sftp 字段（该文件已 gitignore）。
 """
 import argparse
@@ -89,6 +89,10 @@ def main(argv=None):
     pp = sub.add_parser("put", help="上传本地文件到服务器")
     pp.add_argument("local")
     pp.add_argument("remote")
+    mv = sub.add_parser("mv", help="远程文件改名/移动（同名目标默认拒绝，需 --force）")
+    mv.add_argument("src")
+    mv.add_argument("dst")
+    mv.add_argument("--force", action="store_true", help="目标已存在时覆盖")
     args = p.parse_args(argv)
 
     sftp, t = connect()
@@ -107,6 +111,17 @@ def main(argv=None):
         elif args.action == "put":
             sftp.put(args.local, args.remote)
             print(f"uploaded {args.local} -> {args.remote}")
+        elif args.action == "mv":
+            exists = True
+            try:
+                sftp.stat(args.dst)
+            except IOError:
+                exists = False
+            if exists and not args.force:
+                print(f"拒绝：目标已存在 {args.dst}（加 --force 才覆盖）")
+                return 1
+            sftp.rename(args.src, args.dst)
+            print(f"renamed {args.src} -> {args.dst}")
     finally:
         sftp.close()
         t.close()

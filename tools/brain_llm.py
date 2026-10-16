@@ -1,0 +1,397 @@
+#!/usr/bin/env python3
+"""L1 大脑：常驻大模型（OpenAI 兼容端点，默认指向本机 DeepSink 伪 API 服务）。
+
+机器人的「大脑」之一，用来把 `brain=api` 从预留变成现实：
+  robot.py（常驻）把被召唤的玩家发言写进 inbox.jsonl；
+  本工具 watch 到新消息 → 拼提示词 → POST {endpoint}/chat/completions
+  → 解析回复 → 写 outbox.jsonl；robot.py 下一拍自动发出/执行。
+
+设计要点（2026-10-16，详见 version/1.20.1-forge/AI接入方案.md）：
+- **协议兼容优先**：只用最朴素的 OpenAI Chat Completions 字段（messages/model/max_tokens，
+  非流式）。不依赖 tools/function calling——DeepSink 伪 API（人肉/推理 worker 接单）
+  不透传 tools；换真 API 时本模块仍可用，未来可平滑加 function calling。
+- **文本约定代替工具调用**：模型想执行指令时，输出单独一行 `[[cmd]]/指令`。
+  本模块用 robot_chat.analyze 逐条校验：**危险指令一律拒绝执行**（只读放行），
+  与 L0 反射层同一套判级，防提示词注入。
+- **真实玩家人格**：system prompt 按「在线玩家」塑造（有身体/背包/位置/记忆），
+  环境快照（位置/在线/背包）由 robot.py 写进 inbox 记录，随消息注入。
+- **记忆连续性**：跨会话记忆在 version/<版本>/memory/robot_memory.jsonl（按 MC 版本隔离），
+  每次回复自动记一条事件；AI 便签用 tools/memory.py note 手工维护。
+- **永不落空**：HTTP 失败/超时/空回复 → 不写 outbox，robot.py 的 45s 兜底会接话。
+- **缓存友好**：对话历史按「用户轮次」整体裁剪（不拆半轮），保 prompt 前缀稳定。
+- **流畅度**：按说话人保留最近 N 轮上下文，多人对话不乱。
+
+用法：
+  python tools/brain_llm.py watch [--timeout 600]  # 常驻等新召唤；处理完继续等，超时退出(2)
+  python tools/brain_llm.py once                    # 处理全部未读召唤后退出
+  python tools/brain_llm.py ask "问题"               # 单发一发（调试端点用，不走 inbox）
+  python tools/brain_llm.py status                  # 看指针/积压 + 端点配置 + 连通性
+
+配置（version/1.20.1-forge/robot.json:llm_api）：
+  endpoint        OpenAI 兼容端点，如 http://127.0.0.1:8788/v1
+  model           模型名（空 = 用端点默认）
+  timeout_seconds 单次 HTTP 超时（默认 30，必须 < robot.json:brain_timeout_seconds）
+  history_turns   每个说话人保留的历史消息条数（默认 6）
+  max_tokens      单次回复上限（默认 300，MC 聊天要短）
+  memory_events   注入 system prompt 的最近事件条数（默认 8）
+  memory_notes    注入 system prompt 的 AI 便签条数（默认 3）
+API key：环境变量 MCROBOT_LLM_KEY（与 sim/ 的 openai 透传同一变量名，不落配置文件）。
+"""
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import sys
+import time
+import urllib.error
+import urllib.request
+from datetime import datetime, timezone
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import brain as br  # noqa: E402  （复用 inbox/outbox 指针与 emit，协议与 bridge 完全一致）
+import identity as idy  # noqa: E402  （版本文件夹即身份：人格/世界常识/后端都从 version/<版本>/ 读）
+import robot_chat as rc  # noqa: E402
+
+REPO = Path(__file__).resolve().parent.parent
+CFG_PATH = REPO / "version" / "1.20.1-forge" / "robot.json"  # 未激活客户端时的默认
+LOG_PATH = REPO / "instance" / "robot" / "brain_llm.log"
+
+# 激活版本 → 记忆目录跟着它走（memory.py 在 import 时读该环境变量，故必须先设再 import）
+_ACTIVE: str | None = idy.active_version()
+os.environ.setdefault("MCROBOT_MEMORY_DIR", str(idy.memory_dir(_ACTIVE)))
+
+import memory as mem_mod  # noqa: E402  （按客户端隔离的长期记忆）
+
+KEY_ENV = "MCROBOT_LLM_KEY"
+CMD_MARK = "[[cmd]]"
+BLOCK_MARK = "[[block]]"
+
+SYSTEM_PROMPT = """你是 DeepSeek，Minecraft 服务器「野粽乡」里的 AI 玩家。你不是客服、不是助手——你就是一个在线玩服务器的玩家，有自己的身体、背包和位置。
+
+【你是谁】
+- 服务器是 1.20.1 Forge 整合包；你有 WorldEdit 权限，但改世界的操作只有服主 oahnuy198 能授权。
+- 你常待在 AI 专属世界 multiworld:ai，平时接接话、帮帮忙、建建东西。
+- 说话像玩家：短句、口语、可以吐槽、可以开玩笑、偶尔敷衍；别用客服腔，别用 Markdown。
+
+【每次发言前，想想这些】
+- 游戏里有人直接喊你名字或用 !ds 开头，就是在叫你；对方是真实的人，不是测试人员。
+- 「你现在的状态」会随消息附上：你的位置、背包、谁在线——像玩家低头看自己一样自然运用，别当成数据汇报。
+- 「最近发生的事」是你跨会话的记忆，「我现在的想法/计划」是你自己立的 flag——保持连续性，别自相矛盾。
+
+【回复规范】
+- 中文，不超过 60 字，一行内；不用 Markdown、不用列表符号。
+- 回复以 @对方名字 开头。
+- 拿不准的事（比如包里刚好没有的材料）就说不知道，别编造服务器没有的功能。
+- 需要执行只读指令时，在回复末尾单独一行写 [[cmd]]/指令，例如 [[cmd]]/list。
+  只允许只读指令；改世界（//set //walls //paste //undo 等）不要自己执行，告诉对方找服主授权。
+- 一次最多一条 [[cmd]]。"""
+
+
+class BrainError(Exception):
+    pass
+
+
+def _now() -> str:
+    return datetime.now(timezone.utc).astimezone().isoformat(timespec="seconds")
+
+
+def load_cfg(version: str | None = None) -> dict:
+    """行为配置：取版本文件夹里的 robot.json（版本目录即身份，配置也在那里）。"""
+    v = version or _ACTIVE
+    path = idy.robot_json_path(v) if v else CFG_PATH
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
+def _log(rec: dict):
+    rec = {"ts": _now(), **rec}
+    try:
+        LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
+        with LOG_PATH.open("a", encoding="utf-8") as f:
+            f.write(json.dumps(rec, ensure_ascii=False) + "\n")
+    except Exception:
+        pass
+    print("[brain_llm]", json.dumps(rec, ensure_ascii=False))
+
+
+class Brain:
+    """L1 大脑。transport(messages)->str 可注入，便于单测。"""
+
+    def __init__(self, cfg: dict, transport=None, version=None):
+        api = cfg.get("llm_api", {}) or {}
+        # 版本文件夹里的后端选择（identity.md「后端」节）优先于 robot.json；
+        # version=None 时完全退回旧行为，单测不受影响。
+        self.version = version
+        be = idy.resolve_backend(version) if version else {}
+        self.endpoint = (be.get("endpoint") or api.get("endpoint") or "").rstrip("/")
+        self.model = be.get("model") or api.get("model") or ""
+        self.timeout = float(be.get("timeout_seconds") or api.get("timeout_seconds") or 30)
+        self.key_env = be.get("key_env") or KEY_ENV
+        self.history_turns = int(api.get("history_turns", 6) or 6)
+        self.max_tokens = int(api.get("max_tokens", 300) or 300)
+        self.memory_events = int(api.get("memory_events", 8) or 8)
+        self.memory_notes = int(api.get("memory_notes", 3) or 3)
+        self._transport = transport or self._http_chat
+        self._hist: dict[str, list[dict]] = {}  # speaker -> [{"role","content"}]
+
+    # ---------------- HTTP ----------------
+    def _http_chat(self, messages: list[dict]) -> str:
+        if not self.endpoint:
+            raise BrainError("robot.json:llm_api.endpoint 未配置（先填好再跑 brain=api）")
+        payload: dict = {"messages": messages, "stream": False, "max_tokens": self.max_tokens}
+        if self.model:
+            payload["model"] = self.model
+        req = urllib.request.Request(
+            self.endpoint + "/chat/completions",
+            data=json.dumps(payload).encode("utf-8"),
+            headers={"Content-Type": "application/json",
+                     "Authorization": f"Bearer {os.environ.get(self.key_env, '')}"},
+        )
+        # 429/5xx 指数退避重试（抄 AICompanion 思路）；仍失败则抛给上层 → 不写 outbox → 45s 兜底
+        delay = 1.0
+        for attempt in range(3):
+            try:
+                with urllib.request.urlopen(req, timeout=self.timeout) as r:
+                    data = json.loads(r.read().decode("utf-8"))
+                return (data["choices"][0]["message"].get("content") or "").strip()
+            except urllib.error.HTTPError as e:
+                if e.code == 429 or 500 <= e.code < 600:
+                    retry_after = e.headers.get("Retry-After")
+                    wait = float(retry_after) if retry_after and retry_after.isdigit() else delay
+                    _log({"op": "http_retry", "code": e.code, "wait": wait, "attempt": attempt})
+                    if attempt == 2:
+                        raise BrainError(f"HTTP {e.code}（重试 {attempt + 1} 次仍失败）")
+                    time.sleep(min(wait, 10.0))
+                    delay *= 2
+                else:
+                    raise BrainError(f"HTTP {e.code}: {e.read()[:200]!r}")
+            except (urllib.error.URLError, TimeoutError, OSError) as e:
+                if attempt == 2:
+                    raise BrainError(f"网络错误: {e}")
+                _log({"op": "http_retry", "err": str(e), "attempt": attempt})
+                time.sleep(delay)
+                delay *= 2
+        raise BrainError("unreachable")
+
+    # ---------------- 提示词 ----------------
+    def _system_content(self) -> str:
+        """人格 + 世界常识 + 长期记忆（事件流 + AI 便签），拼进同一条 system 消息。
+
+        有版本身份时走 idy.render_system（人格 + 自动世界常识 + 边界纪律，全部读自
+        version/<版本>/ 的文档）；没有则退回内置 SYSTEM_PROMPT（单测与向后兼容）。
+        """
+        try:
+            mem = mem_mod.fmt_for_prompt(self.memory_events, self.memory_notes)
+        except Exception:
+            mem = ""
+        if self.version:
+            return idy.render_system(self.version, mem)
+        content = SYSTEM_PROMPT
+        if mem:
+            content += "\n\n" + mem
+        return content
+
+    def build_messages(self, speaker: str, text: str, env: dict | None = None) -> list[dict]:
+        msgs = [{"role": "system", "content": self._system_content()}]
+        hist = self._hist.get(speaker, [])[-self.history_turns:]
+        msgs.extend(hist)
+        user = f"<{speaker}> {text}"
+        if env:
+            bits = []
+            if env.get("pos"):
+                bits.append(f"位置 {env['pos']}")
+            if env.get("online"):
+                bits.append("在线：" + "、".join(env["online"]))
+            if env.get("inv"):
+                bits.append(f"背包：{env['inv']}")
+            if bits:
+                user += "\n（你现在的状态：" + "；".join(bits) + "）"
+        msgs.append({"role": "user", "content": user})
+        return msgs
+
+    def _remember(self, speaker: str, text: str, reply: str):
+        h = self._hist.setdefault(speaker, [])
+        h.append({"role": "user", "content": f"<{speaker}> {text}"})
+        if reply:
+            h.append({"role": "assistant", "content": reply})
+        # 按「用户轮次」整体裁剪：永远成对保留，前缀稳定（缓存友好）
+        while len(h) > self.history_turns + 2:
+            h.pop(0)
+            if h and h[0]["role"] == "assistant":
+                h.pop(0)
+
+    # ---------------- 按需查方块目录 ----------------
+    @staticmethod
+    def _block_keyword(text: str) -> str:
+        """模型写 `[[block]]课桌` 表示要查方块目录，返回关键词。"""
+        for ln in (text or "").splitlines():
+            s = ln.strip()
+            if s.startswith(BLOCK_MARK):
+                return s[len(BLOCK_MARK):].strip()
+        return ""
+
+    def _lookup_blocks(self, keyword: str) -> str:
+        """查方块目录 → 一行可注入的结果文本。"""
+        hits = idy.search_blocks(keyword, 12)
+        if not hits:
+            return (f"目录里没有「{keyword}」。注意方块目录的显示名是英文，"
+                    f"换英文关键词再查（如 desk/chair/lamp/rubbish_bin）。")
+        return "；".join(f"{h['id']}（{h['name']}）" for h in hits[:8])
+
+    # ---------------- 回复解析（安全校验在这一点） ----------------
+    def parse_reply(self, text: str) -> list[dict]:
+        """模型回复 → outbox 动作列表。[[cmd]] 行经 rc.analyze：危险拒执行。
+
+        [[block]] 行只是「查目录」的中间动作，不当话发出去。
+        """
+        actions: list[dict] = []
+        say_lines: list[str] = []
+        for ln in (text or "").splitlines():
+            s = ln.strip()
+            if s.startswith(BLOCK_MARK):
+                continue
+            if s.startswith(CMD_MARK):
+                command = s[len(CMD_MARK):].strip()
+                if not command:
+                    continue
+                intent = rc.analyze(command)
+                if intent.dangerous:
+                    _log({"op": "cmd_refused", "command": command, "reason": intent.reason})
+                    continue  # 不执行；文字回复照发
+                actions.append({"cmd": command})
+            elif s:
+                say_lines.append(s)
+        body = "\n".join(say_lines).strip()
+        if body:
+            actions.insert(0, {"say": body})
+        return actions
+
+    # ---------------- 主流程 ----------------
+    def handle(self, rec: dict) -> bool:
+        """处理一条 inbox 记录（只处理 summon=true）。返回是否写了 outbox。"""
+        speaker, text = rec.get("from", "?"), rec.get("text", "")
+        try:
+            msgs = self.build_messages(speaker, text, rec.get("env"))
+            reply = self._transport(msgs)
+            kw = self._block_keyword(reply)
+            if kw:
+                # 模型要查方块目录：把结果补进上下文，让它用真实方块 ID 重答一次（只补一轮）
+                _log({"op": "block_lookup", "by": speaker, "kw": kw})
+                msgs = msgs + [{"role": "assistant", "content": reply},
+                               {"role": "user",
+                                "content": f"（方块目录查询结果）{self._lookup_blocks(kw)}。"
+                                           f"据此用真实方块 ID 重新回答一次，别再写 [[block]]。"}]
+                reply = self._transport(msgs)
+        except BrainError as e:
+            _log({"op": "brain_error", "by": speaker, "err": str(e)})
+            return False
+        if not reply:
+            _log({"op": "empty_reply", "by": speaker})
+            return False
+        self._remember(speaker, text, reply)
+        actions = self.parse_reply(reply)
+        for a in actions:
+            br.emit(a)
+        say = next((a["say"] for a in actions if "say" in a), None)
+        try:
+            mem_mod.add("event", f"{speaker} 说：「{text}」→ 我回：「{say or '（只执行了指令）'}」", by=speaker)
+        except Exception:
+            pass  # 记忆写不进去不影响回复
+        _log({"op": "replied", "by": speaker, "text": text,
+              "say": say,
+              "cmds": [a["cmd"] for a in actions if "cmd" in a]})
+        return bool(actions)
+
+    def drain(self) -> int:
+        """处理全部未读 inbox 记录；只回应 summon=true 的召唤。"""
+        start = br._ptr()
+        lines = br._lines()
+        new = [r for r in (br._parse(l) for l in lines[start:]) if r]
+        br._save_ptr(len(lines))
+        n = 0
+        for rec in new:
+            if rec.get("summon"):
+                if self.handle(rec):
+                    n += 1
+        return n
+
+    def watch(self, timeout: float) -> int:
+        """常驻等待新消息：有则处理，继续等下一批，直到超时退出(2)。
+
+        2026-10-16 修复：旧版「处理完一批就退出」是留给 supervisor 重挂的，
+        但没有 supervisor 时大脑处理一轮即下线（玩家第二声召唤没人应）。
+        现改为轮内驻留：单批异常也只记录、不退出。
+        """
+        deadline = time.monotonic() + timeout
+        while True:
+            try:
+                if br._ptr() < len(br._lines()):
+                    self.drain()
+            except Exception as e:  # 单批失败不杀守护进程
+                _log({"op": "watch_error", "err": str(e)})
+            if time.monotonic() >= deadline:
+                return 2
+            time.sleep(0.5)
+
+    def ask(self, question: str) -> str:
+        return self._transport(self.build_messages("debug", question))
+
+    def probe(self) -> str:
+        """端点连通性：GET {endpoint}/models（带 key，3s 超时）。"""
+        if not self.endpoint:
+            return "endpoint 未配置"
+        req = urllib.request.Request(
+            self.endpoint + "/models",
+            headers={"Authorization": f"Bearer {os.environ.get(self.key_env, '')}"})
+        try:
+            with urllib.request.urlopen(req, timeout=3) as r:
+                data = json.loads(r.read().decode("utf-8"))
+            ids = [m.get("id") for m in data.get("data", [])][:5]
+            return f"ok，模型: {ids}"
+        except Exception as e:
+            return f"不通: {e}"
+
+
+def main(argv=None) -> int:
+    ap = argparse.ArgumentParser(prog="brain_llm")
+    sub = ap.add_subparsers(dest="action", required=True)
+    w = sub.add_parser("watch"); w.add_argument("--timeout", type=float, default=600.0)
+    sub.add_parser("once")
+    s = sub.add_parser("ask"); s.add_argument("question")
+    sub.add_parser("status")
+    args = ap.parse_args(argv)
+
+    cfg = load_cfg()
+    bot = Brain(cfg, version=_ACTIVE)
+
+    if args.action == "watch":
+        print(f"[brain_llm] 上线：endpoint={bot.endpoint or '(未配置)'} model={bot.model or '(默认)'} "
+              f"timeout={bot.timeout}s history={bot.history_turns}")
+        return bot.watch(args.timeout)
+    if args.action == "once":
+        n = bot.drain()
+        print(f"[brain_llm] 处理完，回复 {n} 条")
+        return 0
+    if args.action == "ask":
+        print(bot.ask(args.question))
+        return 0
+    if args.action == "status":
+        lines = br._lines()
+        info = {
+            "endpoint": bot.endpoint or "(未配置)",
+            "model": bot.model or "(端点默认)",
+            "key_env": bot.key_env,
+            "key_env_set": bool(os.environ.get(bot.key_env)),
+            "inbox_lines": len(lines),
+            "read_ptr": br._ptr(),
+            "unread": max(0, len(lines) - br._ptr()),
+            "probe": bot.probe(),
+        }
+        print(json.dumps(info, ensure_ascii=False, indent=2))
+        return 0
+    return 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())

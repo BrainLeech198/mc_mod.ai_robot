@@ -56,6 +56,11 @@ def chat(text):
     return _request("POST", "/chat", {"text": text})
 
 
+def chat_since(since=0):
+    """读回 seq > since 的聊天回执。"""
+    return _request("GET", f"/chat?since={int(since)}")
+
+
 def cmd(command):
     return _request("POST", "/command", {"command": command})
 
@@ -71,6 +76,7 @@ def main(argv=None):
     sub.add_parser("state")
     sub.add_parser("close")
     sc = sub.add_parser("chat"); sc.add_argument("text")
+    ss = sub.add_parser("chat-since"); ss.add_argument("since", type=int, nargs="?", default=0)
     sm = sub.add_parser("cmd"); sm.add_argument("command")
     args = p.parse_args(argv)
     try:
@@ -80,6 +86,8 @@ def main(argv=None):
             out = state()
         elif args.action == "chat":
             out = chat(args.text)
+        elif args.action == "chat-since":
+            out = chat_since(args.since)
         elif args.action == "cmd":
             out = cmd(args.command)
         else:

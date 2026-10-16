@@ -1,0 +1,168 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>DeepSink 文档</title>
+<link rel="icon" href="/assets/favicon.svg">
+<link rel="stylesheet" href="/assets/style.css">
+</head>
+<body>
+<nav class="nav"><div class="nav-in">
+  <a class="brand" href="/"><span class="logo">DS</span> DeepSink</a>
+  <div class="nav-links">
+    <a href="/">官网</a>
+    <a href="/chat">对话</a>
+    <a href="/platform">开放平台</a>
+    <a class="on" href="/docs">文档</a>
+    <a href="/status">状态</a>
+  </div>
+  <div class="spacer"></div>
+  <span class="pill">OpenAI + Anthropic</span>
+</div></nav>
+
+<div class="wrap">
+  <div class="hero">
+    <h1>快速开始</h1>
+    <p>DeepSink 同时兼容 <b>OpenAI</b> 与 <b>Anthropic</b> 两套协议。把任意支持自定义 base_url 的客户端指过来，填入密钥即可调用。</p>
+  </div>
+
+  <div class="grid g2">
+    <div class="card">
+      <h2>1 · 准备</h2>
+      <div class="kv">
+        <div class="k">OpenAI Base</div><div class="copybar"><code id="base">__BASE_URL__</code><button class="ghost" onclick="copy($('#base').textContent)">复制</button></div>
+        <div class="k">Anthropic Base</div><div class="copybar"><code id="abase">__A_BASE_URL__</code><button class="ghost" onclick="copy($('#abase').textContent)">复制</button></div>
+        <div class="k">API Key</div><div><code>&lt;你的 key&gt;</code></div>
+        <div class="k">模型</div><div><code>__MODEL__</code></div>
+      </div>
+      <p class="sub" style="margin-top:12px">
+        出于安全，页面<b>不内嵌密钥</b>：请先 <a href="/login">登录 / 注册</a>，
+        再到 <a href="/platform">开放平台</a> 创建密钥（完整 key 仅创建时显示一次）。</p>
+    </div>
+
+    <div class="card">
+      <h2>2 · 调用示例</h2>
+      <p class="sub" style="margin-bottom:6px">OpenAI 协议：</p>
+      <pre>curl __BASE_URL__/chat/completions \
+  -H "Authorization: Bearer &lt;key&gt;" \
+  -H "Content-Type: application/json" \
+  -d '{"model":"__MODEL__","messages":[{"role":"user","content":"你好"}]}'</pre>
+      <p class="sub" style="margin:12px 0 6px">Anthropic 协议：</p>
+      <pre>curl __A_BASE_URL__/v1/messages \
+  -H "x-api-key: &lt;key&gt;" \
+  -H "anthropic-version: 2023-06-01" \
+  -H "Content-Type: application/json" \
+  -d '{"model":"__MODEL__","max_tokens":256,"messages":[{"role":"user","content":"你好"}]}'</pre>
+      <p class="sub">OpenAI Python SDK / Anthropic SDK 同样可用：把 <code>base_url</code> 指向对应地址、<code>api_key</code> 填你的 key。</p>
+    </div>
+  </div>
+
+  <div class="card" style="margin-top:16px">
+    <h2>3 · 端点</h2>
+    <table>
+      <thead><tr><th>方法</th><th>路径</th><th>说明</th></tr></thead>
+      <tbody>
+        <tr><td class="mono">POST</td><td class="mono">/v1/chat/completions</td><td>对话补全（OpenAI 格式；支持 <code>stream:true</code> 逐片流式；含 <code>usage</code> 与 <code>_billing</code>）</td></tr>
+        <tr><td class="mono">POST</td><td class="mono">/v1/messages</td><td>对话补全（Anthropic 格式；<code>x-api-key</code> 或 Bearer 鉴权；支持 SSE 流式）</td></tr>
+        <tr><td class="mono">GET</td><td class="mono">/v1/models</td><td>模型列表（含 <code>context_window</code>/<code>max_output_tokens</code>/<code>capabilities</code>）</td></tr>
+        <tr><td class="mono">GET</td><td class="mono">/v1/models/{id}</td><td>取单个模型；不存在返回 404 <code>model_not_found</code></td></tr>
+        <tr><td class="mono">GET</td><td class="mono">/health</td><td>健康检查（免鉴权）</td></tr>
+      </tbody>
+    </table>
+    <p class="sub" style="margin-top:10px">
+      <b>/v1/*</b> 一律用 <b>API key</b> 鉴权（<code>Authorization: Bearer</code> 或 <code>x-api-key</code>），计费记在 key 的归属账户上。
+    </p>
+    <div class="kv small" style="margin-top:10px">
+      <div class="k">CORS</div><div>API 端点（<code>/v1/*</code>）对浏览器开放（<code>Access-Control-Allow-Origin: *</code>）；控制台 <code>/api/*</code> 维持同源锁定。</div>
+      <div class="k">限流</div><div>按 key 令牌桶限流，超限返回 <code>429 rate_limit_error</code> + <code>Retry-After</code>；响应带 <code>X-RateLimit-*</code> 余量头。</div>
+      <div class="k">请求 ID</div><div>每个响应带 <code>X-Request-Id</code>，便于对账排障。</div>
+      <div class="k">错误信封</div><div>OpenAI：<code>{error:{message,type,param,code}}</code>；Anthropic：<code>{type:error,error:{type,message}}</code>（<code>authentication_error</code>/<code>rate_limit_error</code> 等）。</div>
+    </div>
+    <h2 style="margin-top:20px">控制台接口（会话鉴权）</h2>
+    <p class="sub">这些接口走登录 Cookie（<code>deepsink_session</code>，HttpOnly + SameSite=Strict），<b>必须已登录</b>，且只能访问自己的数据。</p>
+    <table>
+      <thead><tr><th>方法</th><th>路径</th><th>说明</th></tr></thead>
+      <tbody>
+        <tr><td class="mono">POST</td><td class="mono">/api/auth/register</td><td>注册（email / name / password）并自动登录</td></tr>
+        <tr><td class="mono">POST</td><td class="mono">/api/auth/login</td><td>登录，下发会话 Cookie</td></tr>
+        <tr><td class="mono">POST</td><td class="mono">/api/auth/logout</td><td>登出，清除会话</td></tr>
+        <tr><td class="mono">GET</td><td class="mono">/api/me</td><td>当前登录用户</td></tr>
+        <tr><td class="mono">POST</td><td class="mono">/api/chat</td><td>网页版对话（会话鉴权，不暴露 key）</td></tr>
+        <tr><td class="mono">GET</td><td class="mono">/api/account</td><td>余额与汇总</td></tr>
+        <tr><td class="mono">POST</td><td class="mono">/api/account/password</td><td>修改密码（改密后踢出其它会话）</td></tr>
+        <tr><td class="mono">GET</td><td class="mono">/api/sessions</td><td>登录会话列表</td></tr>
+        <tr><td class="mono">POST</td><td class="mono">/api/sessions/revoke</td><td>踢出会话（<code>{id}</code> 或 <code>{all:true}</code>）</td></tr>
+        <tr><td class="mono">GET/POST</td><td class="mono">/api/keys</td><td>密钥列表 / 创建</td></tr>
+        <tr><td class="mono">POST</td><td class="mono">/api/keys/toggle · /api/keys/delete</td><td>启用禁用 / 删除</td></tr>
+        <tr><td class="mono">POST</td><td class="mono">/api/recharge</td><td>充值额度</td></tr>
+        <tr><td class="mono">GET</td><td class="mono">/api/usage?limit=50</td><td>用量明细</td></tr>
+        <tr><td class="mono">GET</td><td class="mono">/api/ledger</td><td>额度流水</td></tr>
+        <tr><td class="mono">GET</td><td class="mono">/api/bridge</td><td>推理队列快照：待处理 / 处理中 / 已回复（控制台实时面板用）</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <div class="grid g2" style="margin-top:16px">
+    <div class="card">
+      <h2>计费规则</h2>
+      <div class="kv small">
+        <div class="k">输入</div><div>¥0.002 / 1K tokens</div>
+        <div class="k">输出</div><div>¥0.008 / 1K tokens</div>
+        <div class="k">赠送</div><div>新用户 ¥10.00</div>
+        <div class="k">欠费</div><div>返回 <code>402 insufficient_quota</code></div>
+      </div>
+      <p class="sub">Token 用量按文本长度估算，用于计费与配额控制。</p>
+    </div>
+
+    <div class="card">
+      <h2>模型与速率限制</h2>
+      <div class="kv small">
+        <div class="k">模型</div><div><code>__MODEL__</code> · <code>deepsink-reasoner</code>（完整列表见 <code>GET /v1/models</code>）</div>
+        <div class="k">限流</div><div>按 key 令牌桶：默认 600 RPM、突发 60。</div>
+        <div class="k">超限</div><div>返回 <code>429</code> + <code>Retry-After</code>；每次请求回带 <code>X-RateLimit-Limit-Requests</code> / <code>X-RateLimit-Remaining-Requests</code>。</div>
+        <div class="k">并发</div><div>网关无状态，可横向扩展；单账户用量独立计费。</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="card" style="margin-top:16px">
+    <h2>接进 Minecraft</h2>
+    <p class="sub">任何支持"自定义 OpenAI base_url + key + model"的 MC 模组（如 MCAgent 一类）都能直接接上：</p>
+    <div class="kv">
+      <div class="k">Base URL</div><div><code>__BASE_URL__</code></div>
+      <div class="k">API Key</div><div><code>&lt;你的 key&gt;</code></div>
+      <div class="k">Model</div><div><code>__MODEL__</code></div>
+    </div>
+    <p class="sub" style="margin-top:12px">模组会像调用任何 OpenAI 兼容服务一样工作，无需改动其内部逻辑。</p>
+  </div>
+
+  <div class="card" style="margin-top:16px">
+    <h2>接 Anthropic 客户端</h2>
+    <p class="sub">任何走 Anthropic Messages 协议的客户端，把环境变量指向本服务即可：</p>
+    <pre>ANTHROPIC_BASE_URL=__A_BASE_URL__        # 注意：末尾不要带 /v1（客户端会自己拼 /v1/messages）
+ANTHROPIC_API_KEY=&lt;key&gt;
+ANTHROPIC_MODEL=__MODEL__</pre>
+    <p class="sub" style="margin-top:10px">提示：需要多轮工具调用（<code>tool_use</code>）的 agent 客户端，请在服务端配置可用的模型端点，以支持完整的工具循环。</p>
+  </div>
+
+  <div class="card" style="margin-top:16px">
+    <h2>账户与安全</h2>
+    <div class="kv small">
+      <div class="k">账户</div><div>邮箱 + 密码注册（PBKDF2-SHA256 加盐存储，密码不落明文）；新用户赠送 ¥10.00</div>
+      <div class="k">会话</div><div>控制台用 HttpOnly + SameSite=Strict Cookie，默认 7 天</div>
+      <div class="k">数据隔离</div><div>每个账户只能看到自己的密钥、余额与用量</div>
+      <div class="k">密钥</div><div>完整 key 仅创建时返回一次，列表只显示掩码</div>
+      <div class="k">安全响应头</div><div>页面带 <code>CSP</code> / <code>X-Frame-Options: DENY</code> / <code>Permissions-Policy</code></div>
+      <div class="k">登录节流</div><div>同一邮箱连续失败多次后临时锁定（<code>429</code>）</div>
+    </div>
+    <p class="sub" style="margin-top:10px">⚠ 默认仅监听本机。若要对局域网 / 公网提供服务，请配置反向代理与 TLS，并妥善保管 API 密钥。</p>
+  </div>
+
+  <div class="foot">DeepSink · 大模型 API 平台 · 接入文档</div>
+</div>
+
+<script src="/assets/app.js"></script>
+<script>navAuth();</script>
+</body>
+</html>
