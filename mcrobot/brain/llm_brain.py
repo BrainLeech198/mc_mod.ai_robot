@@ -35,7 +35,7 @@
   max_tokens      单次回复上限（默认 300，MC 聊天要短）
   memory_events   注入 system prompt 的最近事件条数（默认 8）
   memory_notes    注入 system prompt 的 AI 便签条数（默认 3）
-API key：环境变量 MCROBOT_LLM_KEY（与 sim/ 的 openai 透传同一变量名，不落配置文件）。
+API key：环境变量 MCROBOT_LLM_KEY（与 mock_api 的 openai 透传同一变量名，不落配置文件）。
 """
 from __future__ import annotations
 

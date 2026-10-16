@@ -38,7 +38,7 @@ DEFAULT_VERSION = "1.20.1-forge"
 
 BACKEND_PRESETS: dict[str, dict] = {
     "deepsink-local": {
-        "label": "DeepSink 本机伪 API（sim/ :8788）",
+        "label": "DeepSink 本机伪 API（mock_api :8788）",
         "endpoint": "http://127.0.0.1:8788/v1",
         "model": "deepsink-chat",
         "key_env": "MCROBOT_LLM_KEY",

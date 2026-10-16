@@ -24,7 +24,7 @@ from pathlib import Path
 
 TOOLS = Path(__file__).resolve().parent
 from ..paths import REPO
-SIM = REPO / "sim"
+from ..paths import MOCK_API as SIM
 WORKER_LOG = REPO / "instance" / "robot" / "worker.out"
 
 from ..body import bridge as cc
