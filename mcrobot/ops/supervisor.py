@@ -10,9 +10,9 @@ robot.py 是常驻身体，但它自己没有自愈能力——崩一次（控�
 两个进程不能同时消费 inbox（会抢记录），所以 supervisor 默认不拉 brain_llm。
 
 用法：
-  python tools/supervisor.py start [--with-deepsink] [--with-api-brain]  # 前台常驻，Ctrl+C 停
-  python tools/supervisor.py status      # 看受管进程是否活着 + 最近重启次数
-  python tools/supervisor.py stop        # 停掉本守护拉起的全部子进程
+  python -m mcrobot.ops.supervisor start [--with-deepsink] [--with-console] [--with-api-brain]
+  python -m mcrobot.ops.supervisor status  # 看受管进程是否活着 + 最近重启次数
+  python -m mcrobot.ops.supervisor stop    # 停掉本守护拉起的全部子进程
 
 环境变量 MCROBOT_LLM_KEY：给 --with-api-brain 用（伪 API 端点鉴权）。
 """

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""brain_llm L1 大脑单测。运行：python tools/test_brain_llm.py
+"""brain_llm L1 大脑单测。运行：python -m unittest tests.test_brain_llm
 
 两组：
 1. 假 transport：解析/安全校验/提示词/历史裁剪（不起网络）。

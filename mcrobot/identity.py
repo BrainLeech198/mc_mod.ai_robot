@@ -17,11 +17,11 @@
   memory/        长期记忆（按版本隔离）
 
 用法：
-  python tools/identity.py versions
-  python tools/identity.py use 1.20.1-forge
-  python tools/identity.py show                 # 解析出的身份（含自动生成的世界常识）
-  python tools/identity.py prompt               # 打印最终 system prompt（调试用）
-  python tools/identity.py blocks 课桌          # 查方块目录
+  python -m mcrobot.identity versions
+  python -m mcrobot.identity use 1.20.1-forge
+  python -m mcrobot.identity show               # 解析出的身份（含自动生成的世界常识）
+  python -m mcrobot.identity prompt             # 打印最终 system prompt（调试用）
+  python -m mcrobot.identity blocks 课桌        # 查方块目录
 """
 from __future__ import annotations
 

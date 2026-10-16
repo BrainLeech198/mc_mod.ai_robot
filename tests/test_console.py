@@ -100,19 +100,19 @@ class ProcessDetectTest(unittest.TestCase):
 
     def test_sim_worker_is_not_bridge_brain(self):
         self._fake(["python deepsink_brain.py watch --worker claude-mc --timeout 300"])
-        self.assertFalse(cs._running("brain.py watch"))   # 子串命中 = 假阳性
+        self.assertFalse(cs._running("mcrobot.brain.bridge_brain"))   # 子串命中 = 假阳性
         self.assertTrue(cs._running("deepsink_brain.py"))
 
     def test_real_brain_detected(self):
-        self._fake(["python brain.py watch --timeout 1800"])
-        self.assertTrue(cs._running("brain.py watch"))
+        self._fake(["python -m mcrobot.brain.bridge_brain watch --timeout 1800"])
+        self.assertTrue(cs._running("mcrobot.brain.bridge_brain"))
 
     def test_robot_and_llm(self):
-        self._fake(["python -u tools/robot.py --interval 1.0",
-                    "python -u brain_llm.py watch --timeout 7200"])
-        self.assertTrue(cs._running("robot.py"))
-        self.assertTrue(cs._running("brain_llm.py"))
-        self.assertFalse(cs._running("supervisor.py"))
+        self._fake(["python -u -m mcrobot.body.loop --interval 1.0",
+                    "python -u -m mcrobot.brain.llm_brain watch --timeout 7200"])
+        self.assertTrue(cs._running("mcrobot.body.loop"))
+        self.assertTrue(cs._running("mcrobot.brain.llm_brain"))
+        self.assertFalse(cs._running("mcrobot.ops.supervisor"))
 
     def test_nothing_matches_garbage(self):
         self.assertFalse(cs._running("definitely_not_a_script.py"))

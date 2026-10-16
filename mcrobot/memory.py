@@ -10,10 +10,10 @@ version/<版本>/memory/robot_memory.jsonl —— 换 MC 版本自动换一份�
 - thought AI 便签：我自己的想法/计划/偏好（worker 人工写，或以后模型自己写）。
 
 用法：
-  python tools/memory.py add "oahnuy198 夸我建造有进步"
-  python tools/memory.py note "打算把学校建成三层，用模组方块"
-  python tools/memory.py recent [n]
-  python tools/memory.py fmt                # 打印可注入提示词的记忆块（调试用）
+  python -m mcrobot.memory add "oahnuy198 夸我建造有进步"
+  python -m mcrobot.memory note "打算把学校建成三层，用模组方块"
+  python -m mcrobot.memory recent [n]
+  python -m mcrobot.memory fmt                # 打印可注入提示词的记忆块（调试用）
 """
 from __future__ import annotations
 

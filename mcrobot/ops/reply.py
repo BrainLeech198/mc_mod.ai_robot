@@ -7,9 +7,9 @@
 回复就此丢失，玩家白等。本工具把「回单」降级为「主动发言」，回复永不丢。
 
 用法：
-  python tools/reply_mc.py req_xxxx "回复内容"      # 先回单，失败则发聊天
-  python tools/reply_mc.py --say-only "内容"        # 直接发聊天（不回单）
-  python tools/reply_mc.py --latest "内容"          # 回最近一条 CLAIM 记录的单
+  python -m mcrobot.ops.reply req_xxxx "回复内容"      # 先回单，失败则发聊天
+  python -m mcrobot.ops.reply --say-only "内容"        # 直接发聊天（不回单）
+  python -m mcrobot.ops.reply --latest "内容"          # 回最近一条 CLAIM 记录的单
 
 退出码：0=走通（至少一种方式送达），1=都没送达。
 """

@@ -5,9 +5,9 @@
 确认后加 --execute 才真正删除。
 
 用法：
-    python tools/server_cleanup.py              # 演习，列出将删内容
-    python tools/server_cleanup.py --execute    # 执行清理（小件，约 176M）
-    python tools/server_cleanup.py --execute --include-dh   # 额外删 5.3G DH 库（必须先停服！）
+    python -m mcrobot.ops.server_cleanup              # 演习，列出将删内容
+    python -m mcrobot.ops.server_cleanup --execute    # 执行清理（小件，约 176M）
+    python -m mcrobot.ops.server_cleanup --execute --include-dh   # 额外删 5.3G DH 库（必须先停服！）
 
 安全护栏：
 - 路径拒绝 .. 与绝对路径

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""robot_chat 解析/分级单测。运行：python tools/test_robot_chat.py"""
+"""robot_chat 解析/分级单测。运行：python -m unittest tests.test_body_reflex"""
 import unittest
 
 from mcrobot.body import reflex as rc

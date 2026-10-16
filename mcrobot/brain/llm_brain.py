@@ -8,7 +8,7 @@
 
 设计要点（2026-10-16，详见 version/1.20.1-forge/AI接入方案.md）：
 - **协议兼容优先**：只用最朴素的 OpenAI Chat Completions 字段（messages/model/max_tokens，
-  非流式）。不依赖 tools/function calling——DeepSink 伪 API（人肉/推理 worker 接单）
+  非流式）。不依赖 function calling——DeepSink 伪 API（人肉/推理 worker 接单）
   不透传 tools；换真 API 时本模块仍可用，未来可平滑加 function calling。
 - **文本约定代替工具调用**：模型想执行指令时，输出单独一行 `[[cmd]]/指令`。
   本模块用 robot_chat.analyze 逐条校验：**危险指令一律拒绝执行**（只读放行），
@@ -16,16 +16,16 @@
 - **真实玩家人格**：system prompt 按「在线玩家」塑造（有身体/背包/位置/记忆），
   环境快照（位置/在线/背包）由 robot.py 写进 inbox 记录，随消息注入。
 - **记忆连续性**：跨会话记忆在 version/<版本>/memory/robot_memory.jsonl（按 MC 版本隔离），
-  每次回复自动记一条事件；AI 便签用 tools/memory.py note 手工维护。
+  每次回复自动记一条事件；AI 便签用 `python -m mcrobot.memory note` 手工维护。
 - **永不落空**：HTTP 失败/超时/空回复 → 不写 outbox，robot.py 的 45s 兜底会接话。
 - **缓存友好**：对话历史按「用户轮次」整体裁剪（不拆半轮），保 prompt 前缀稳定。
 - **流畅度**：按说话人保留最近 N 轮上下文，多人对话不乱。
 
 用法：
   python -m mcrobot.brain.llm_brain watch [--timeout 600]  # 常驻等新召唤；处理完继续等，超时退出(2)
-  python tools/brain_llm.py once                    # 处理全部未读召唤后退出
-  python tools/brain_llm.py ask "问题"               # 单发一发（调试端点用，不走 inbox）
-  python tools/brain_llm.py status                  # 看指针/积压 + 端点配置 + 连通性
+  python -m mcrobot.brain.llm_brain once             # 处理全部未读召唤后退出
+  python -m mcrobot.brain.llm_brain ask "问题"        # 单发一发（调试，不走 inbox）
+  python -m mcrobot.brain.llm_brain status           # 看指针/积压 + 端点配置 + 连通性
 
 配置（version/1.20.1-forge/robot.json:llm_api）：
   endpoint        OpenAI 兼容端点，如 http://127.0.0.1:8788/v1

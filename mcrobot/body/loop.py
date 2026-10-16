@@ -9,10 +9,10 @@
 - 大脑：`bridge`（AI/预留 API 经 inbox-outbox 决策）+ 本文件内置规则快答。预留 `api`（大模型常驻）。
 
 用法：
-  python tools/robot.py --once            # 处理自上次以来新增的聊天后退出
-  python tools/robot.py                   # 常驻轮询（Ctrl-C 退出）
-  python tools/robot.py --once --dry      # 只打印决策，不真发
-  python tools/robot.py --from-scratch    # 忽略游标，从头（本次会话全部回执）处理
+  python -m mcrobot.body.loop --once       # 处理自上次以来新增的聊天后退出
+  python -m mcrobot.body.loop             # 常驻轮询（Ctrl-C 退出）
+  python -m mcrobot.body.loop --once --dry  # 只打印决策，不真发
+  python -m mcrobot.body.loop --from-scratch  # 忽略游标，从头处理
 """
 from __future__ import annotations
 

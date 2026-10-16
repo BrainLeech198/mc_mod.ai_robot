@@ -12,7 +12,7 @@
 - **我们架构的独家约束**：野粽乡是**公服**，服务端不加 mod；机器人必须是**真人可见的真玩家**（真客户端 + ControlMod），且要被**服务器里其他玩家**在聊天框指挥。2026-10-16 网络调研确认：现成开源项目**没有一个直接满足**这三条（详见 §1.5），所以主线仍是自建；但它们的**工具设计/提示词工程/协议形态**大量可抄。
 - **大脑三层次（用户 2026-10-16 拍板「先用伪 API，以后升级」）**：
   - **L0 反射层**（规则，0 延迟，永不漏）——已实装在 `robot.py`。
-  - **L1 API 大脑**（OpenAI 兼容端点）——**先用本机 DeepSink 伪 API 服务（人肉/推理 worker 接单），以后换真 API 只改 `robot.json:llm_api.endpoint` + key**。`tools/brain_llm.py` 已实装（2026-10-16）。
+  - **L1 API 大脑**（OpenAI 兼容端点）——**先用本机 DeepSink 伪 API 服务（人肉/推理 worker 接单），以后换真 API 只改 `robot.json:llm_api.endpoint` + key**。`mcrobot.brain.llm_brain.py` 已实装（2026-10-16）。
   - **L2 Claude Code 在线大脑**（bridge）——已实装，处理复杂规划/审美/兜底。
 - **可抄的项目**（2026-10-16 复核均在活跃更新）：mcagent（同版本 Forge，MIT）、MC-AI-Agent-Player/Bot（MIT）、MineAgent（AGPL，只借思想）、minecraft-mcp-server（工具分类学）。
 
@@ -107,8 +107,8 @@ robot.py（常驻循环，已做）
 
 - **L0 反射层**独立于 LLM，保证「永不漏话」（airi 思路）。
 - **L1 = API 级对话的关键**。端点配置在 `robot.json:llm_api`（`endpoint`/`model`/`timeout_seconds`/`history_turns`；key 走环境变量 `MCROBOT_LLM_KEY` 不落文件）。**换真 API = 改 endpoint + 换 key，代码不动**（用户 2026-10-16 拍板「先用伪 API 服务，以后升级」）。
-- **L2 保留**：需要「人类级审美/长规划」的活仍走 bridge（`tools/brain.py`）。
-- **切换方式**：`brain=bridge`（AI 在线接单）与 `brain=api`（`python tools/brain_llm.py watch` 常驻）二选一；两者共用 inbox/outbox 协议，robot.py 无感。
+- **L2 保留**：需要「人类级审美/长规划」的活仍走 bridge（`mcrobot.brain.bridge_brain.py`）。
+- **切换方式**：`brain=bridge`（AI 在线接单）与 `brain=api`（`python -m mcrobot.brain.llm_brain watch` 常驻）二选一；两者共用 inbox/outbox 协议，robot.py 无感。
 
 ### 工具集（抄 MCAgent 18 工具 + Agent-Player drive_*，按需裁剪）
 
@@ -150,12 +150,12 @@ robot.py（常驻循环，已做）
 
 | 组件 | 状态 | 位置 |
 |------|------|------|
-| L0 反射层 + 聊天指挥通道 | ✅ | `tools/robot.py` `tools/robot_chat.py` `version/1.20.1-forge/robot.json` |
+| L0 反射层 + 聊天指挥通道 | ✅ | `mcrobot/body/loop.py` `mcrobot/body/reflex.py` `version/1.20.1-forge/robot.json` |
 | 即时回执 + 45s 大脑超时兜底 | ✅ | `robot.py:auto_reply/check_brain_timeouts` |
-| L2 bridge 大脑（AI 在线接单） | ✅ | `tools/brain.py`（watch/read/say/cmd/status） |
-| L1 API 大脑 | ✅ 代码完成，待真机联调 | `tools/brain_llm.py`（watch/once/ask/status；`[[cmd]]` 协议经 `rc.analyze` 安全校验） |
-| L1 单测 | ✅ | `tools/test_brain_llm.py`（假 transport + 本地 stub HTTP e2e） |
-| 伪 API 服务（DeepSink） | ✅ 另一窗口维护中 | `sim/`（`:8788`，OpenAI+Anthropic 双协议，流式时序仿真） |
+| L2 bridge 大脑（AI 在线接单） | ✅ | `mcrobot.brain.bridge_brain.py`（watch/read/say/cmd/status） |
+| L1 API 大脑 | ✅ 代码完成，待真机联调 | `mcrobot.brain.llm_brain.py`（watch/once/ask/status；`[[cmd]]` 协议经 `rc.analyze` 安全校验） |
+| L1 单测 | ✅ | `tests/test_brain_llm.py.py`（假 transport + 本地 stub HTTP e2e） |
+| 伪 API 服务（DeepSink） | ✅ 另一窗口维护中 | `../mock_api`（`:8788`，OpenAI+Anthropic 双协议，流式时序仿真） |
 
 ---
 
@@ -166,11 +166,11 @@ robot.py（常驻循环，已做）
 **阶段二（进行中）——「API 级对话」**：
 1. ✅ L1 `brain_llm.py` + 单测（2026-10-16）
 2. ⬜ **真机联调**：DeepSink（`:8788`，另一窗口维护）+ 推理 worker 在线时，玩家聊天 → L1 回复全链路；顺带验证伪 API 的「骗客户端」效果
-3. ⬜ **常驻 supervisor**（`tools/supervisor.py`）：保证 `robot.py` + `brain_llm.py watch` 不断线，漏话重挂（抄 AICompanion 重试策略）
+3. ⬜ **常驻 supervisor**（`mcrobot.ops.supervisor.py`）：保证 `robot.py` + `brain_llm.py watch` 不断线，漏话重挂（抄 AICompanion 重试策略）
 4. ⬜ **提示词打磨**：把 mcagent/airi 的执行策略（批量合并、失败止损、行动预算、错误熔断）写进 `brain_llm.py:SYSTEM_PROMPT` 并按真机表现迭代
 
 **阶段三——「建得好看」**：
-1. ⬜ `tools/build_lib.py` 参数化建造技能库（墙/坡屋顶/窗带/门廊/楼梯/围栏/花圃 + 调色板含模组方块；抄 Agent-Player 算法建房）
+1. ⬜ `mcrobot/skills/build.py` 参数化建造技能库（墙/坡屋顶/窗带/门廊/楼梯/围栏/花圃 + 调色板含模组方块；抄 Agent-Player 算法建房）
 2. ⬜ 任务链编排（chat 级 `plan_tasks` 等，抄 Agent-Bot；先做「一句话→多步→逐步回执」）
 3. ⬜ Schematic 流水线（schem 上传 + `//schem load` + `//paste` 封装）
 
@@ -188,7 +188,7 @@ robot.py（常驻循环，已做）
 
 ## 8. 待用户决策
 
-- ~~LLM 大脑用哪家~~ → **已拍板（2026-10-16）**：先用 DeepSink 伪 API 服务（sim/），`llm_api.endpoint` 已预填；以后换真 API 只改配置。
+- ~~LLM 大脑用哪家~~ → **已拍板（2026-10-16）**：先用 DeepSink 伪 API 服务（../mock_api/），`llm_api.endpoint` 已预填；以后换真 API 只改配置。
 - **建造优先**：先做**参数化模板库**（稳），还是先做 **schematic 载入**（快且好，但要素材）？（推荐：模板库先行，schematic 作为质量上限补充）
 - **ControlMod 原生动作**（活人感从指令层升级到客户端动作层）：用户此前定为「后期制作」，是否提前到阶段四？
 - **语音输入**：要不要做（需要额外 STT key，硅基流动有免费额度）？

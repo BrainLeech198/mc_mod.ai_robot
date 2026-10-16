@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""robot 去重/节流单测。运行：python tools/test_robot_throttle.py
+"""robot 去重/节流单测。运行：python -m unittest tests.test_body_throttle
 
 不需要真实控制桥：把 robot.cc.chat 换成记录器即可。
 """
@@ -41,8 +41,31 @@ def make_bot(tmp: Path, *, dedup=6.0, interval=0.0, max_consec=2, chain_reset=10
     return robot.Robot(cfg, dry=False)
 
 
-class ThrottleTest(unittest.TestCase):
+class _BridgeStubMixin:
+    """统一打桩 robot.cc（它就是 mcrobot.body.bridge 模块本身）。
+
+    robot.cc 是模块级全局，直接改函数会**污染别的测试模块**（test_bridge 会因此收不到
+    请求）。所以统一在 setUp 存快照、tearDown 必还原——每个用到打桩的类都继承它。
+    """
+
+    _BRIDGE_FUNCS = ("chat", "cmd", "state", "chat_since")
+
     def setUp(self):
+        super().setUp()          # 先让 mixin 存快照
+        self._bridge_snapshot = {k: getattr(robot.cc, k) for k in self._BRIDGE_FUNCS}
+        super().setUp()
+
+    def tearDown(self):
+        try:
+            for k, v in self._bridge_snapshot.items():
+                setattr(robot.cc, k, v)
+        finally:
+            super().tearDown()
+
+
+class ThrottleTest(_BridgeStubMixin, unittest.TestCase):
+    def setUp(self):
+        super().setUp()          # 先让 mixin 存快照
         self.tmp = Path(tempfile.mkdtemp())
         self.sent: list[str] = []
         robot.cc.chat = lambda text: self.sent.append(text)  # 拦截发送
@@ -109,10 +132,11 @@ class ThrottleTest(unittest.TestCase):
         self.assertEqual(len(self.sent), 1, self.sent)
 
 
-class AckPoolTest(unittest.TestCase):
+class AckPoolTest(_BridgeStubMixin, unittest.TestCase):
     """即时回执：随机但不离池，避免每次同一句像机器人。"""
 
     def setUp(self):
+        super().setUp()          # 先让 mixin 存快照
         self.tmp = Path(tempfile.mkdtemp())
         self.sent: list[str] = []
         robot.cc.chat = lambda text: self.sent.append(text)
@@ -143,10 +167,11 @@ class AckPoolTest(unittest.TestCase):
         self.assertTrue(bot.ack("p").startswith("@p "))
 
 
-class EnvSnapshotTest(unittest.TestCase):
+class EnvSnapshotTest(_BridgeStubMixin, unittest.TestCase):
     """环境快照：召唤入队时附位置/在线/背包。"""
 
     def setUp(self):
+        super().setUp()          # 先让 mixin 存快照
         self.tmp = Path(tempfile.mkdtemp())
         self.sent: list[str] = []
         self.cmds: list[str] = []
@@ -191,7 +216,7 @@ class EnvSnapshotTest(unittest.TestCase):
         self.assertEqual(self.cmds, [])  # 不该调任何指令
 
 
-class ReflexFirstTest(unittest.TestCase):
+class ReflexFirstTest(_BridgeStubMixin, unittest.TestCase):
     """L0 反射优先：能秒回的先秒回，不必干等大脑（2026-10-16）。
 
     背景：原先 queue_all_summon=true 时一律入队等大脑，玩家问「在吗」也被挡在
@@ -199,20 +224,19 @@ class ReflexFirstTest(unittest.TestCase):
     """
 
     def setUp(self):
+        super().setUp()          # 先让 mixin 存快照
         self.tmp = tempfile.TemporaryDirectory()
         td = Path(self.tmp.name)
         self.sent = []
-        # 打桩要还原：robot.cc 是模块级全局，污染了会连累后面的测试类
-        self._orig_chat = robot.cc.chat
-        self._orig_since = robot.cc.chat_since
         robot.cc.chat = lambda t: (self.sent.append(t), {"ok": True})[1]
         robot.cc.chat_since = lambda s=0: {"seq": 0, "chats": []}
         self.td = td
 
     def tearDown(self):
-        robot.cc.chat = self._orig_chat
-        robot.cc.chat_since = self._orig_since
-        self.tmp.cleanup()
+        try:
+            self.tmp.cleanup()
+        finally:
+            super().tearDown()   # 交给 mixin 统一还原
 
     def _bot(self):
         return make_bot(self.td)
@@ -249,7 +273,7 @@ class ReflexFirstTest(unittest.TestCase):
         self.assertGreater(len(seen), 1, "招呼应从池子里换句")
 
 
-class NearbyListenTest(unittest.TestCase):
+class NearbyListenTest(_BridgeStubMixin, unittest.TestCase):
     """附近聆听（2026-10-16）：不用 @，人在身边说话也当在叫它。
 
     背景：玩家不会每句话都 @DeepSeek，不 @ 就完全没反应，看上去像挂机。
@@ -260,20 +284,21 @@ class NearbyListenTest(unittest.TestCase):
     ME = {"dim": "multiworld:ai", "x": 80.0, "y": -56.0, "z": -60.0}
 
     def setUp(self):
+        super().setUp()          # 先让 mixin 存快照
         self.tmp = tempfile.TemporaryDirectory()
         self.td = Path(self.tmp.name)
         self.sent: list[str] = []
         self.cmds: list[str] = []
-        self._orig = {k: getattr(robot.cc, k) for k in ("chat", "cmd", "state", "chat_since")}
         robot.cc.chat = lambda t: self.sent.append(t)
         robot.cc.cmd = lambda c: self.cmds.append(c)
         robot.cc.state = lambda: {"player": dict(self.ME)}
         robot.cc.chat_since = lambda s=0: {"seq": 0, "chats": []}
 
     def tearDown(self):
-        for k, v in self._orig.items():
-            setattr(robot.cc, k, v)
-        self.tmp.cleanup()
+        try:
+            self.tmp.cleanup()
+        finally:
+            super().tearDown()   # 交给 mixin 统一还原
 
     def _bot(self, radius=24.0, same_dim=True, allowed=("oahnuy198",)):
         return make_bot(self.td, listen={"nearby_enabled": True, "radius_blocks": radius,
