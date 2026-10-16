@@ -132,6 +132,12 @@ class Brain:
         self.memory_notes = int(api.get("memory_notes", 3) or 3)
         self._transport = transport or self._http_chat
         self._hist: dict[str, list[dict]] = {}  # speaker -> [{"role","content"}]
+        # Voyager 式闭环（robot.json:agentic）。默认关：一次性回复路径已被验证，
+        # 闭环需要真机联调；打开后动作同步执行并自检重试。
+        ag = cfg.get("agentic", {}) or {}
+        self.agentic = bool(ag.get("enabled", False))
+        self.agentic_rounds = int(ag.get("max_rounds", 4) or 4)
+        self.agentic_budget = int(ag.get("action_budget", 20) or 20)
 
     # ---------------- HTTP ----------------
     def _http_chat(self, messages: list[dict]) -> str:
@@ -269,6 +275,48 @@ class Brain:
     def handle(self, rec: dict) -> bool:
         """处理一条 inbox 记录（只处理 summon=true）。返回是否写了 outbox。"""
         speaker, text = rec.get("from", "?"), rec.get("text", "")
+        if self.agentic:
+            return self._handle_agentic(speaker, text)
+        return self._handle_once(rec, speaker, text)
+
+    def _handle_agentic(self, speaker: str, text: str) -> bool:
+        """Voyager 式闭环：感知 → 决策 → 执行 → 自检 → 最多 N 轮修正。
+
+        与一次性回复的区别：动作**同步执行**并拿回执，自检判成败，
+        失败就把批评喂回决策再试一轮；到上限或行动预算用尽则停手（不空转）。
+        """
+        from .agent_loop import AgentLoop
+        from .llm_policy import make_decide, make_verify
+        from ..tools.builtin import build_registry
+        from ..tools.registry import dangerous_allowed
+
+        reg = build_registry()
+        loop = AgentLoop(registry=reg,
+                         decide=make_decide(self._transport, reg),
+                         verify=make_verify(self._transport),
+                         max_rounds=self.agentic_rounds,
+                         action_budget=self.agentic_budget)
+        try:
+            s = loop.run(text, actor=speaker,
+                         dangerous_allowed=dangerous_allowed(self.version))
+        except Exception as e:
+            _log({"op": "agentic_error", "by": speaker, "err": f"{type(e).__name__}: {e}"})
+            return False
+        _log({"op": "agentic_done", "by": speaker, "verdict": s.verdict,
+              "round": s.round, "tool_calls": s.tool_calls,
+              "aborted": s.aborted, "critique": s.critique[:200]})
+        for r in s.receipts:
+            if r.ok and r.tool == "say":
+                br.emit({"say": (r.data or {}).get("text", "")})
+        try:
+            mem_mod.add("event", f"{speaker} 说：「{text}」→ agentic {s.verdict}"
+                                 f"（{s.round} 轮/{s.tool_calls} 次调用）", by=speaker)
+        except Exception:
+            pass
+        return bool(s.receipts)
+
+    def _handle_once(self, rec: dict, speaker: str, text: str) -> bool:
+        """一次性回复路径（默认）：模型回一段文本，解析出 [[cmd]] 后交给身体异步执行。"""
         try:
             msgs = self.build_messages(speaker, text, rec.get("env"))
             reply = self._transport(msgs)

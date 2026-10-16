@@ -34,6 +34,7 @@ class AgentState:
 
     goal: str
     actor: str = ""
+    dangerous_allowed: tuple[str, ...] = ()
     observation: dict = field(default_factory=dict)
     plan: list[dict] = field(default_factory=list)
     receipts: list[ToolResult] = field(default_factory=list)
@@ -135,7 +136,8 @@ class AgentLoop:
 
     def run(self, goal: str, *, actor: str = "", dry: bool = False,
             dangerous_allowed: tuple[str, ...] = ()) -> AgentState:
-        s = AgentState(goal=goal, actor=actor, max_rounds=self.max_rounds)
+        s = AgentState(goal=goal, actor=actor, max_rounds=self.max_rounds,
+                       dangerous_allowed=dangerous_allowed)
         ctx = CallContext(actor=actor, dry=dry, dangerous_allowed=dangerous_allowed)
         node = next_node(s)
         while node is not END:

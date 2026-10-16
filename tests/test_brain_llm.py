@@ -293,5 +293,40 @@ class HttpE2ETest(unittest.TestCase):
         self.assertTrue(bot.probe().startswith("ok"))
 
 
+class AgenticSwitchTest(unittest.TestCase):
+    """robot.json:agentic.enabled 决定走哪条路径。"""
+
+    def setUp(self):
+        self._td = tempfile.TemporaryDirectory()
+        self._tmp = self._td.name
+        br.INBOX = Path(self._tmp) / "inbox.jsonl"
+        br.OUTBOX = Path(self._tmp) / "outbox.jsonl"
+        br.PTR = Path(self._tmp) / "inbox.ptr"
+
+    def tearDown(self):
+        self._td.cleanup()
+
+    def _brain(self, enabled: bool, reply: str):
+        cfg = make_cfg(Path(self._tmp))
+        cfg["agentic"] = {"enabled": enabled, "max_rounds": 1, "action_budget": 3}
+        seen: dict = {"calls": []}
+        bot = bl.Brain(cfg, transport=lambda m: (seen["calls"].append(m), reply)[1])
+        return bot, seen
+
+    def test_disabled_uses_once_path(self):
+        bot, seen = self._brain(False, "你好啊")
+        bot.handle({"from": "oahnuy198", "text": "在吗", "summon": True})
+        self.assertTrue(seen["calls"])                        # 走了 build_messages
+        self.assertEqual(seen["calls"][0][0]["role"], "system")
+
+    def test_enabled_uses_agentic_path(self):
+        bot, seen = self._brain(True, '[{"name":"say","arguments":{"text":"好"}}]')
+        bot.handle({"from": "oahnuy198", "text": "种棵树", "summon": True})
+        # 闭环路径的 system 是决策器/裁判的话术，不是人格提示词
+        systems = [c[0]["content"] for c in seen["calls"]]
+        self.assertTrue(any("决策器" in s for s in systems), systems[:1])
+        self.assertTrue(any("自检裁判" in s for s in systems))   # critic 也跑过
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
