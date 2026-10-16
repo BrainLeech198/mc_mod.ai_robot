@@ -15,6 +15,7 @@
   undo-policy.json 撤回纪律 → 自动进「活动边界」
   robot.json     聊天行为 + 危险操作白名单 {dangerous_allowed}（robot.py 直接读）
   memory/        长期记忆（按版本隔离）
+  skills.jsonl   学会的技能（按版本隔离，做成过的才入库）
 
 用法：
   python -m mcrobot.identity versions

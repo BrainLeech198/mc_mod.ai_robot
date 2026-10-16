@@ -15,6 +15,7 @@
 | 撤回纪律（剩余 ≤2 次停手） | `undo-policy.json` |
 | 操作手册 / 架构方案 | `机器人手册.md` / `AI接入方案.md` |
 | 长期记忆（自动维护） | `memory/robot_memory.jsonl` |
+| 学会的技能（自动维护） | `skills.jsonl` |
 | 就绪清单 | `ready.json` |
 
 > 上面这些里，`mods.md` 与 `方块目录.md` 会被 `tools/identity.py` 自动读成「世界常识」注入提示词——**改文档即改 AI 的认知**，不用改代码。

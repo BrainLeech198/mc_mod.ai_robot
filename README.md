@@ -17,12 +17,13 @@ version/           身份与环境（一个版本文件夹 = 一份完整 AI 身
 mcrobot/           代码（分层）
   body/            身体：bridge（ControlMod 桥）· reflex（L0 反射）· loop（主循环）
   brain/           大脑：protocol（inbox/outbox 契约）· llm_brain（L1 API）·
-                   bridge_brain（L2 人肉）· agent_loop（编排）· llm_policy（决策/自检）
-  tools/           工具层：registry（MCP 风格注册表）· builtin（13 个工具）· mcp_server
-  skills/          技能库（下一轮）
+                   bridge_brain（L2 人肉）· agent_loop（编排）· llm_policy（决策/自检）·
+                   checkpoint（断点续跑）
+  tools/           工具层：registry（MCP 风格注册表）· builtin（16 个工具）· mcp_server
+  skills/          技能库：library（存取/检索/学习）· build（预置建造模板）
   ops/             运维：supervisor · launch_client · sftp · cleanup · reply
   console/         本地网页控制台（:8901）
-tests/             单测（155 项）
+tests/             单测（194 项）
 controlmod/        Forge 客户端 mod 源码
 instance/          游戏运行时目录（不入库）
 ```
@@ -40,6 +41,8 @@ instance/          游戏运行时目录（不入库）
 
 - **工具层走 MCP**：任何 MCP 客户端（Claude Desktop、CodeBuddy…）可直接指挥机器人
 - **闭环抄 Voyager**：执行后拿回执 → 独立 critic 自检 → 失败带批评重试（默认 4 轮）
+- **技能库抄 Voyager**：做成过的事自动入库，下次同类目标直接调模板（`version/<版本>/skills.jsonl`）
+- **断点续跑抄 LangGraph**：任务状态每拍落盘，同一个 task_id 可从断掉的那一拍接着跑
 - **工程纪律抄 mcagent/airi**：行动预算、失败止损、错误熔断
 - **改文档即改 AI 的认知**：`mods.md` / `方块目录.md` 一改，下次注入的世界常识就跟着变
 
@@ -55,6 +58,8 @@ python -m mcrobot.brain.llm_brain status                # 看 L1 端点与连通
 python -m mcrobot.identity versions | use <版本> | prompt   # 身份与提示词调试
 python -m mcrobot.identity blocks desk                  # 查方块目录
 python -m mcrobot.tools.mcp_server                      # 作为 MCP server 运行（stdio）
+python -m mcrobot.skills.library install | list | search 砌墙   # 技能库
+python -m mcrobot.brain.checkpoint list | show <task_id>        # 断点续跑存档
 ```
 
 跑全部单测：

@@ -108,6 +108,13 @@ def _we(args: dict, ctx: CallContext, sub: str) -> ToolResult:
     block = str(args.get("block") or "").strip()
     if not block:
         return ToolResult(False, f"worldedit_{sub}", "", error="block 为空")
+    if sub == "replace":
+        # //replace 要两个参数：源方块 + 目标方块，只给一个会造成整片区域被误填
+        to = str(args.get("to") or "").strip()
+        if not to:
+            return ToolResult(False, "worldedit_replace", "",
+                              error="replace 需要 block（源）和 to（目标）两个方块")
+        return _run_one(f"//replace {block} {to}", ctx)
     return _run_one(f"//{sub} {block}", ctx)
 
 
@@ -124,6 +131,85 @@ def _t_we_select(args: dict, ctx: CallContext) -> ToolResult:
 
 def _t_we_undo(_args: dict, ctx: CallContext) -> ToolResult:
     return _run_one("//undo", ctx)
+
+
+# ------------------------------ 技能库 ------------------------------
+
+# 技能里不允许再套技能工具（防递归、防凭空造技能）
+_SKILL_TOOLS = frozenset({"skill_search", "skill_run", "skill_save"})
+
+
+def _t_skill_search(args: dict, ctx: CallContext) -> ToolResult:
+    from ..skills import library as skl
+    q = str(args.get("query") or "").strip()
+    if not q:
+        return ToolResult(False, "skill_search", "", error="query 为空")
+    hits = skl.search(q, int(args.get("top_k") or 3))
+    if not hits:
+        return ToolResult(True, "skill_search", "", data={"hits": []},
+                          text=f"没有与「{q}」相关的已有技能，这次从头做。")
+    briefs = [h.brief() for h in hits]
+    return ToolResult(True, "skill_search", "", data={"hits": briefs},
+                      text=json.dumps(briefs, ensure_ascii=False))
+
+
+def _t_skill_run(args: dict, ctx: CallContext) -> ToolResult:
+    """跑一个技能模板。每一步都过注册表 → 危险门控照旧生效。"""
+    from ..skills import library as skl
+    name = str(args.get("name") or "").strip()
+    sk = skl.get(name) if name else None
+    if not sk:
+        return ToolResult(False, "skill_run", "", error=f"没有技能 {name}（先 skill_search）")
+    params = {k: v for k, v in (args.get("params") or {}).items()}
+    try:
+        calls = sk.render(**params)
+    except ValueError as e:
+        return ToolResult(False, "skill_run", "", error=str(e))
+    outs = []
+    for c in calls:
+        if c["name"] in _SKILL_TOOLS:
+            outs.append({"tool": c["name"], "ok": False, "error": "技能里不能套技能"})
+            break
+        r = REGISTRY.call(c["name"], c["arguments"], ctx)
+        outs.append({"tool": r.tool, "ok": r.ok, "output": r.text, "error": r.error})
+        if not r.ok:
+            break  # 失败止损，和 run_batch 一致
+    ok = bool(outs) and all(o.get("ok") for o in outs)
+    try:
+        skl.record(name, ok)
+    except Exception:
+        pass
+    return ToolResult(ok, "skill_run", "", data={"name": name, "results": outs},
+                      text=json.dumps(outs, ensure_ascii=False)[:1500])
+
+
+def _t_skill_save(args: dict, ctx: CallContext) -> ToolResult:
+    """把一串验证过的动作存成技能（Voyager：只存做成过的）。"""
+    from ..skills import library as skl
+    name = str(args.get("name") or "").strip()
+    steps = args.get("steps") or []
+    if not name or not isinstance(steps, list) or not steps:
+        return ToolResult(False, "skill_save", "", error="name 和 steps 都要给")
+    clean = []
+    for st in steps:
+        if not isinstance(st, dict) or not st.get("tool"):
+            return ToolResult(False, "skill_save", "", error="steps 每项要含 tool")
+        if st["tool"] in _SKILL_TOOLS:
+            return ToolResult(False, "skill_save", "", error=f"{st['tool']} 不能进技能")
+        try:
+            REGISTRY.tool(st["tool"])       # 工具必须真实存在，别存废技能
+        except KeyError as e:
+            return ToolResult(False, "skill_save", "", error=str(e))
+        clean.append({"tool": st["tool"], "arguments": st.get("arguments") or {}})
+    sk = skl.Skill(name=name,
+                   description=str(args.get("description") or f"模型整理的技能 {name}"),
+                   steps=clean,
+                   params={str(k): str(v) for k, v in (args.get("params") or {}).items()},
+                   tags=[str(t) for t in (args.get("tags") or [])],
+                   source="learned", created="")
+    skl.save(sk)
+    return ToolResult(True, "skill_save", "", data=sk.to_dict(),
+                      text=f"技能 {name} 已入库（{len(clean)} 步）")
 
 
 # ------------------------------ 注册 ------------------------------
@@ -179,7 +265,6 @@ def build_registry() -> Registry:
         ("set", "用指定方块填满选区"),
         ("walls", "沿选区边界砌墙"),
         ("hollow", "把选区做成空心（墙+地板+天花板）"),
-        ("replace", "把选区内某方块替换成另一种"),
     ):
         reg.register(Tool(
             f"worldedit_{sub}", f"WorldEdit //{sub}：{desc}。",
@@ -188,8 +273,45 @@ def build_registry() -> Registry:
              "required": ["block"]}, DANGEROUS,
             (lambda s: (lambda a, c: _we(a, c, s)))(sub)))
     reg.register(Tool(
+        "worldedit_replace",
+        "WorldEdit //replace：把选区内某方块替换成另一种（两个方块都要给）。",
+        {"type": "object",
+         "properties": {"block": {"type": "string", "description": "源方块 ID，如 dirt"},
+                        "to": {"type": "string", "description": "目标方块 ID，如 grass_block"}},
+         "required": ["block", "to"]}, DANGEROUS,
+        lambda a, c: _we(a, c, "replace")))
+    reg.register(Tool(
         "worldedit_undo", "撤回上一次 WorldEdit 操作（受撤回纪律约束）。",
         {"type": "object", "properties": {}, "required": []}, DANGEROUS, _t_we_undo))
+
+    reg.register(Tool(
+        "skill_search",
+        "查技能库里有没有做成过的相近技能（返回摘要，不返回完整步骤）。干活前先查，别重复造轮子。",
+        {"type": "object",
+         "properties": {"query": {"type": "string", "description": "要干什么，如「砌一圈墙」"},
+                        "top_k": {"type": "integer", "default": 3}},
+         "required": ["query"]}, SAFE, _t_skill_search))
+    reg.register(Tool(
+        "skill_run",
+        "跑一个已入库的技能模板。每一步照样过危险门控：没授权的步骤会被拒。",
+        {"type": "object",
+         "properties": {"name": {"type": "string", "description": "技能名，如 build_wall"},
+                        "params": {"type": "object",
+                                   "description": "参数值，如 {pos1:'0,0,0', pos2:'10,4,0'}"}},
+         "required": ["name"]}, SAFE, _t_skill_run))
+    reg.register(Tool(
+        "skill_save",
+        "把一串**已经做成过**的动作存成可复用技能（带 {参数} 占位更好用）。只存验证过的。",
+        {"type": "object",
+         "properties": {"name": {"type": "string", "description": "技能名，英文小写下划线"},
+                        "description": {"type": "string"},
+                        "steps": {"type": "array",
+                                  "items": {"type": "object",
+                                            "properties": {"tool": {"type": "string"},
+                                                           "arguments": {"type": "object"}}}},
+                        "params": {"type": "object", "description": "参数名 → 默认值"},
+                        "tags": {"type": "array", "items": {"type": "string"}}},
+         "required": ["name", "steps"]}, SAFE, _t_skill_save))
     return reg
 
 

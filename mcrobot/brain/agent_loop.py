@@ -33,10 +33,12 @@ class AgentState:
     """一次任务的完整状态。可序列化 → 能落盘 → 断点续跑。"""
 
     goal: str
+    task_id: str = ""
     actor: str = ""
     dangerous_allowed: tuple[str, ...] = ()
     observation: dict = field(default_factory=dict)
     plan: list[dict] = field(default_factory=list)
+    actions: list[dict] = field(default_factory=list)   # 真正发出去的调用（含参数，供学技能用）
     receipts: list[ToolResult] = field(default_factory=list)
     round: int = 0
     max_rounds: int = 4
@@ -50,11 +52,35 @@ class AgentState:
         self.trace.append({"ts": round(time.time(), 3), "node": node, **kv})
 
     def to_dict(self) -> dict:
-        return {"goal": self.goal, "actor": self.actor, "round": self.round,
-                "tool_calls": self.tool_calls, "verdict": self.verdict,
+        return {"goal": self.goal, "task_id": self.task_id, "actor": self.actor,
+                "round": self.round,
+                "max_rounds": self.max_rounds, "tool_calls": self.tool_calls,
+                "verdict": self.verdict, "observation": self.observation,
+                "plan": self.plan, "actions": self.actions,
                 "critique": self.critique, "aborted": self.aborted,
                 "receipts": [r.to_dict() for r in self.receipts],
                 "trace": self.trace}
+
+    @classmethod
+    def from_dict(cls, d: dict) -> "AgentState":
+        """从落盘状态恢复（断点续跑）。回执只留摘要字段。"""
+        s = cls(goal=d.get("goal") or "", task_id=d.get("task_id") or "",
+                actor=d.get("actor") or "",
+                round=int(d.get("round") or 0),
+                max_rounds=int(d.get("max_rounds") or 4),
+                tool_calls=int(d.get("tool_calls") or 0),
+                verdict=d.get("verdict"), critique=d.get("critique") or "",
+                aborted=d.get("aborted") or "",
+                observation=d.get("observation") or {},
+                plan=d.get("plan") or [], actions=d.get("actions") or [],
+                trace=d.get("trace") or [])
+        for r in d.get("receipts") or []:
+            s.receipts.append(ToolResult(bool(r.get("ok")), r.get("tool") or "",
+                                         r.get("action_id") or "",
+                                         text=r.get("text") or "",
+                                         error=r.get("error") or "",
+                                         data=r.get("data") or {}))
+        return s
 
 
 def next_node(s: AgentState) -> str | None:
@@ -63,7 +89,11 @@ def next_node(s: AgentState) -> str | None:
         return END
     if not s.trace:
         return "perceive"
-    last = s.trace[-1]["node"]
+    # "resume" 只是恢复标记，不算节点——按它前面那个真实节点决定去哪
+    last = next((t["node"] for t in reversed(s.trace)
+                 if t.get("node") != "resume"), None)
+    if last is None:
+        return "perceive"
     if last == "perceive":
         return "decide"
     if last == "decide":
@@ -85,7 +115,8 @@ class AgentLoop:
                  verify: Callable[[AgentState], tuple[bool, str]] | None = None,
                  max_rounds: int = 4,
                  action_budget: int = 20,
-                 tools_for_observation: tuple[str, ...] = ("get_state",)):
+                 tools_for_observation: tuple[str, ...] = ("get_state",),
+                 skills_enabled: bool = True):
         self.registry = registry or build_registry()
         # 注意：不能叫 self.decide / self.verify —— 会盖掉同名节点方法
         self.decide_fn = decide or _fallback_decide
@@ -93,6 +124,8 @@ class AgentLoop:
         self.max_rounds = max_rounds
         self.action_budget = action_budget
         self.tools_for_observation = tools_for_observation
+        # Voyager 技能库：规划前检索、做成后入库。关掉就是纯闭环（便于单测隔离）
+        self.skills_enabled = skills_enabled
 
     # ---------------- 节点 ----------------
 
@@ -103,7 +136,18 @@ class AgentLoop:
                 s.observation[name] = r.data or {"text": r.text}
             else:
                 s.observation[name] = {"error": r.error}
-        s.log("perceive", tools=list(self.tools_for_observation))
+        # Voyager：规划前先查技能库，把相近的绝活塞进观察里（检索失败不影响流程）
+        skill_names: list[str] = []
+        if self.skills_enabled:
+            try:
+                from ..skills import library as skl
+                hits = skl.search(s.goal, top_k=3)
+                if hits:
+                    s.observation["skills"] = [h.brief() for h in hits]
+                    skill_names = [h.name for h in hits]
+            except Exception:
+                pass
+        s.log("perceive", tools=list(self.tools_for_observation), skills=skill_names)
 
     def decide(self, s: AgentState, ctx: CallContext):
         s.round += 1
@@ -119,6 +163,8 @@ class AgentLoop:
                 return
             s.tool_calls += 1
             r = self.registry.call(call.get("name") or "", call.get("arguments"), ctx)
+            s.actions.append({"name": call.get("name") or "",
+                              "arguments": call.get("arguments") or {}})
             s.receipts.append(r)
             s.log("act", tool=r.tool, ok=r.ok, action_id=r.action_id,
                   error=r.error[:120] if r.error else "")
@@ -135,13 +181,27 @@ class AgentLoop:
     # ---------------- 跑 ----------------
 
     def run(self, goal: str, *, actor: str = "", dry: bool = False,
-            dangerous_allowed: tuple[str, ...] = ()) -> AgentState:
-        s = AgentState(goal=goal, actor=actor, max_rounds=self.max_rounds,
-                       dangerous_allowed=dangerous_allowed)
+            dangerous_allowed: tuple[str, ...] = (), task_id: str = "",
+            checkpoint=None) -> AgentState:
+        """跑一次任务。给了 checkpoint 就每拍落盘；同 task_id 有存档则从存档续跑。"""
+        s = None
+        if checkpoint and task_id:
+            s = checkpoint.load(task_id)
+            if s:
+                s.log("resume", round=s.round)
+        if s is None:
+            s = AgentState(goal=goal, task_id=task_id, actor=actor,
+                           max_rounds=self.max_rounds,
+                           dangerous_allowed=dangerous_allowed)
         ctx = CallContext(actor=actor, dry=dry, dangerous_allowed=dangerous_allowed)
         node = next_node(s)
         while node is not END:
             getattr(self, node)(s, ctx)
+            if checkpoint and s.task_id:
+                try:
+                    checkpoint.save(s)
+                except Exception:
+                    pass  # 落盘失败不影响干活
             nxt = next_node(s)
             if nxt == node:
                 s.aborted = f"节点 {node} 自环，强制结束"
@@ -149,6 +209,13 @@ class AgentLoop:
             node = nxt
         if s.verdict is None and not s.aborted:
             s.verdict = "fail"
+        if self.skills_enabled and s.verdict == "ok" and s.actions:
+            # Voyager：做成过的事才配进库，下次同类目标直接调模板
+            try:
+                from ..skills import library as skl
+                skl.learn_from_actions(s.goal, s.actions)
+            except Exception:
+                pass
         return s
 
 

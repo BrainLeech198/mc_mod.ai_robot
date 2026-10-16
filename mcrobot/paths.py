@@ -33,3 +33,8 @@ def robot_json(name: str | None = None) -> Path:
 
 def memory_dir(name: str | None = None) -> Path:
     return version_dir(name) / "memory"
+
+
+def skills_file(name: str | None = None) -> Path:
+    """技能库文件（按版本隔离：换版本 = 换一套技能）。"""
+    return version_dir(name) / "skills.jsonl"

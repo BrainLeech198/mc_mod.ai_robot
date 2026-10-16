@@ -286,6 +286,7 @@ class Brain:
         失败就把批评喂回决策再试一轮；到上限或行动预算用尽则停手（不空转）。
         """
         from .agent_loop import AgentLoop
+        from .checkpoint import Checkpointer
         from .llm_policy import make_decide, make_verify
         from ..tools.builtin import build_registry
         from ..tools.registry import dangerous_allowed
@@ -296,8 +297,10 @@ class Brain:
                          verify=make_verify(self._transport),
                          max_rounds=self.agentic_rounds,
                          action_budget=self.agentic_budget)
+        task_id = f"{speaker}-{int(time.time())}"
         try:
-            s = loop.run(text, actor=speaker,
+            s = loop.run(text, actor=speaker, task_id=task_id,
+                         checkpoint=Checkpointer(),
                          dangerous_allowed=dangerous_allowed(self.version))
         except Exception as e:
             _log({"op": "agentic_error", "by": speaker, "err": f"{type(e).__name__}: {e}"})
