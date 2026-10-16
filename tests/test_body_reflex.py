@@ -2,7 +2,7 @@
 """robot_chat 解析/分级单测。运行：python tools/test_robot_chat.py"""
 import unittest
 
-import robot_chat as rc
+from mcrobot.body import reflex as rc
 
 
 class ParseTest(unittest.TestCase):

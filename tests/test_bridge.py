@@ -3,7 +3,7 @@ import threading
 import unittest
 from http.server import BaseHTTPRequestHandler, HTTPServer
 
-import control_client
+from mcrobot.body import bridge as control_client
 
 
 def make_handler(state, received):

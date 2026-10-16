@@ -14,7 +14,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-import identity as idy
+from mcrobot import identity as idy
 
 
 class ParseTest(unittest.TestCase):

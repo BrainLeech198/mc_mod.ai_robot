@@ -10,7 +10,7 @@
 - 一键启停 L1 大脑（brain_llm 接单）、手动代发一句话/一条指令
 
 只依赖 Python 标准库。用法：
-  python tools/console.py [--port 8899] [--host 127.0.0.1]
+  python -m mcrobot.console.server [--port 8899] [--host 127.0.0.1]
 然后浏览器打开 http://127.0.0.1:8899/
 """
 from __future__ import annotations
@@ -29,13 +29,12 @@ from pathlib import Path
 from urllib.parse import parse_qs, urlsplit
 
 HERE = Path(__file__).resolve().parent
-REPO = HERE.parent
-sys.path.insert(0, str(HERE))
+from ..paths import REPO, ROBOT_DIR
 
-import brain as br  # noqa: E402
-import identity as idy  # noqa: E402
+from ..brain import protocol as br
+from .. import identity as idy
 
-STATIC = HERE / "console"
+STATIC = HERE / "web"
 ROBOT_DIR = REPO / "instance" / "robot"
 SECRETS = ROBOT_DIR / "secrets.env"
 LOG_FILES = {
@@ -170,12 +169,12 @@ def body_alive() -> bool:
     try:
         return time.time() - (ROBOT_DIR / "cursor.json").stat().st_mtime < 15
     except Exception:
-        return _running("robot.py")
+        return _running("mcrobot.body.loop")
 
 
 def game_state() -> dict:
     try:
-        import control_client as cc
+        from ..body import bridge as cc
         s = cc.state()
         p = s.get("player") or {}
         return {"in_game": bool(s.get("inGame")), "player": p}
@@ -204,16 +203,16 @@ def endpoint_ok(url: str) -> str:
 def brain_start() -> dict:
     if _BRAIN["proc"] and _BRAIN["proc"].poll() is None:
         return {"ok": False, "msg": f"{_BRAIN['kind']} 已在跑"}
-    if _running("brain.py watch"):
+    if _running("mcrobot.brain.bridge_brain"):
         # 两个大脑同时消费 inbox 会抢记录（手册禁区）
-        return {"ok": False, "msg": "检测到 bridge 大脑（brain.py watch）在跑，先停它再起 L1，否则会抢消息"}
+        return {"ok": False, "msg": "检测到 bridge 大脑（bridge_brain watch）在跑，先停它再起 L1，否则会抢消息"}
     env = dict(os.environ)
     env["MCROBOT_MEMORY_DIR"] = str(idy.memory_dir())
     env["PYTHONIOENCODING"] = "utf-8"
     log = (ROBOT_DIR / "brain_llm.out").open("a", encoding="utf-8")
     proc = subprocess.Popen(
-        [sys.executable, "-u", "brain_llm.py", "watch", "--timeout", "7200"],
-        cwd=str(HERE), env=env, stdout=log, stderr=subprocess.STDOUT)
+        [sys.executable, "-u", "-m", "mcrobot.brain.llm_brain", "watch", "--timeout", "7200"],
+        cwd=str(REPO), env=env, stdout=log, stderr=subprocess.STDOUT)
     _BRAIN.update(proc=proc, started=time.time(), kind="L1 大脑")
     return {"ok": True, "msg": f"已启动 L1 大脑 pid={proc.pid}"}
 
@@ -238,7 +237,7 @@ def brain_status() -> dict:
     return {"console_brain": "running" if mine else "stopped",
             "pid": p.pid if mine else None,
             "uptime": round(time.time() - _BRAIN["started"]) if mine else 0,
-            "bridge_watch": _running("brain.py watch")}
+            "bridge_watch": _running("mcrobot.brain.bridge_brain")}
 
 
 # ---------------- API ----------------
@@ -255,7 +254,7 @@ def api_state(_body=None) -> dict:
         "backend": {**be, "key_masked": mask(os.environ.get(be["key_env"], "")),
                     "probe": endpoint_ok(be.get("endpoint", ""))},
         "status": {"body": body_alive(), "game": game_state(),
-                   "supervisor": _running("supervisor.py"), **brain_status()},
+                   "supervisor": _running("mcrobot.ops.supervisor"), **brain_status()},
         "queue": {"inbox_lines": len(lines), "ptr": br._ptr(),
                   "unread": max(0, len(lines) - br._ptr()),
                   "inbox": _jsonl_tail(ROBOT_DIR / "inbox.jsonl", 15),
@@ -267,7 +266,7 @@ def api_preview(body: dict) -> dict:
     """这个 agent 自动拼好的完整提示词——人格 + 世界常识 + 记忆 + 环境 + 历史。"""
     ver = idy.active_version()
     cfg = json.loads(idy.robot_json_path().read_text(encoding="utf-8"))
-    import brain_llm as bl
+    from ..brain import llm_brain as bl
     bot = bl.Brain(cfg, version=ver)
     speaker = (body or {}).get("speaker", "oahnuy198")
     text = (body or {}).get("text", "在吗")
@@ -280,7 +279,7 @@ def api_ask(body: dict) -> dict:
     """手动问一句（走完整提示词）。send=true 时顺便把回复写进 outbox。"""
     ver = idy.active_version()
     cfg = json.loads(idy.robot_json_path().read_text(encoding="utf-8"))
-    import brain_llm as bl
+    from ..brain import llm_brain as bl
     bot = bl.Brain(cfg, version=ver)
     text = (body or {}).get("text", "")
     if not text:

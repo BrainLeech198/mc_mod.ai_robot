@@ -22,7 +22,7 @@
 - **流畅度**：按说话人保留最近 N 轮上下文，多人对话不乱。
 
 用法：
-  python tools/brain_llm.py watch [--timeout 600]  # 常驻等新召唤；处理完继续等，超时退出(2)
+  python -m mcrobot.brain.llm_brain watch [--timeout 600]  # 常驻等新召唤；处理完继续等，超时退出(2)
   python tools/brain_llm.py once                    # 处理全部未读召唤后退出
   python tools/brain_llm.py ask "问题"               # 单发一发（调试端点用，不走 inbox）
   python tools/brain_llm.py status                  # 看指针/积压 + 端点配置 + 连通性
@@ -49,12 +49,10 @@ import urllib.request
 from datetime import datetime, timezone
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parent))
-import brain as br  # noqa: E402  （复用 inbox/outbox 指针与 emit，协议与 bridge 完全一致）
-import identity as idy  # noqa: E402  （版本文件夹即身份：人格/世界常识/后端都从 version/<版本>/ 读）
-import robot_chat as rc  # noqa: E402
-
-REPO = Path(__file__).resolve().parent.parent
+from . import protocol as br  # inbox/outbox 协议：与 bridge 大脑共用同一套指针
+from .. import identity as idy  # 版本文件夹即身份：人格/世界常识/后端都从 version/<版本>/ 读
+from ..body import reflex as rc
+from ..paths import REPO
 CFG_PATH = REPO / "version" / "1.20.1-forge" / "robot.json"  # 未激活客户端时的默认
 LOG_PATH = REPO / "instance" / "robot" / "brain_llm.log"
 
@@ -62,7 +60,7 @@ LOG_PATH = REPO / "instance" / "robot" / "brain_llm.log"
 _ACTIVE: str | None = idy.active_version()
 os.environ.setdefault("MCROBOT_MEMORY_DIR", str(idy.memory_dir(_ACTIVE)))
 
-import memory as mem_mod  # noqa: E402  （按客户端隔离的长期记忆）
+from .. import memory as mem_mod  # 按版本隔离的长期记忆
 
 KEY_ENV = "MCROBOT_LLM_KEY"
 CMD_MARK = "[[cmd]]"

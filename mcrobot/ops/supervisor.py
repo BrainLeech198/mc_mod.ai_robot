@@ -27,19 +27,20 @@ import sys
 import time
 from pathlib import Path
 
-TOOLS = Path(__file__).resolve().parent
-REPO = TOOLS.parent
-SIM = REPO / "sim"
+from ..paths import REPO, SIM
 RUNTIME = REPO / "instance" / "robot"
 STATE = RUNTIME / "supervisor.json"
 
 # 名称 -> (cwd, 命令, 日志)
 JOBS: dict[str, tuple[Path, list[str], str]] = {
-    "robot": (REPO, [sys.executable, "-u", "tools/robot.py", "--interval", "1.0"], "loop.out"),
+    "robot": (REPO, [sys.executable, "-u", "-m", "mcrobot.body.loop", "--interval", "1.0"], "loop.out"),
     "deepsink": (SIM, [sys.executable, "-u", "deepsink_server.py", "serve", "--backend", "bridge",
                        "--port", "8788"], "deepsink.out"),
+    "console": (REPO, [sys.executable, "-u", "-m", "mcrobot.console.server",
+                       "--port", "8901"], "console.out"),
 }
-API_BRAIN = (TOOLS, [sys.executable, "-u", "brain_llm.py", "watch", "--timeout", "7200"], "watch.out")
+API_BRAIN = (REPO, [sys.executable, "-u", "-m", "mcrobot.brain.llm_brain", "watch",
+                  "--timeout", "7200"], "watch.out")
 
 RESTART_DELAY = 3.0     # 重启前等一会儿，避免崩溃循环打满 CPU
 CHECK_INTERVAL = 2.0
@@ -88,13 +89,17 @@ def _log(msg: str) -> None:
     print(f"[supervisor {time.strftime('%H:%M:%S')}] {msg}", flush=True)
 
 
-def build_jobs(with_deepsink: bool, with_api_brain: bool) -> list[Proc]:
+def build_jobs(with_deepsink: bool, with_api_brain: bool, with_console: bool) -> list[Proc]:
     jobs = [Proc("robot", *JOBS["robot"])]
     if with_deepsink:
         jobs.append(Proc("deepsink", *JOBS["deepsink"]))
+    if with_console:
+        jobs.append(Proc("console", *JOBS["console"]))
     if with_api_brain:
         if not os.environ.get("MCROBOT_LLM_KEY"):
             _log("警告：没设 MCROBOT_LLM_KEY，API 大脑会鉴权失败")
+        if any(j.name == "bridge_watch" for j in jobs):
+            _log("警告：bridge 大脑与 API 大脑不能同时消费 inbox")
         jobs.append(Proc("brain_llm", *API_BRAIN))
     return jobs
 
@@ -112,7 +117,7 @@ def _save_state(jobs: list["Proc"], started: float) -> None:
 
 def cmd_start(args) -> int:
     RUNTIME.mkdir(parents=True, exist_ok=True)
-    jobs = build_jobs(args.with_deepsink, args.with_api_brain)
+    jobs = build_jobs(args.with_deepsink, args.with_api_brain, args.with_console)
     started = time.time()
     for j in jobs:
         j.start()
@@ -181,6 +186,7 @@ def main(argv=None) -> int:
     sub = ap.add_subparsers(dest="action", required=True)
     st = sub.add_parser("start")
     st.add_argument("--with-deepsink", action="store_true", help="一并守护 DeepSink 伪 API 服务")
+    st.add_argument("--with-console", action="store_true", help="一并守护网页控制台（:8901）")
     st.add_argument("--with-api-brain", action="store_true",
                     help="一并守护 brain_llm（走伪 API 的大脑；与人类大脑二选一，别同时开）")
     sub.add_parser("status")

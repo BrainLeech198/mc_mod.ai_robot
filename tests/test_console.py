@@ -11,8 +11,8 @@ import tempfile
 import unittest
 from pathlib import Path
 
-import console as cs
-import identity as idy
+from mcrobot.console import server as cs
+from mcrobot import identity as idy
 
 
 class PreviewTest(unittest.TestCase):

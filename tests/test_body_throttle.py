@@ -8,7 +8,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-import robot
+from mcrobot.body import loop as robot
 
 
 def make_bot(tmp: Path, *, dedup=6.0, interval=0.0, max_consec=2, chain_reset=10.0, conv_window=120.0, env_on=False,

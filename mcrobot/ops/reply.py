@@ -23,12 +23,11 @@ import sys
 from pathlib import Path
 
 TOOLS = Path(__file__).resolve().parent
-REPO = TOOLS.parent
+from ..paths import REPO
 SIM = REPO / "sim"
 WORKER_LOG = REPO / "instance" / "robot" / "worker.out"
 
-sys.path.insert(0, str(TOOLS))
-import control_client as cc  # noqa: E402
+from ..body import bridge as cc
 
 
 def reply(rid: str, text: str) -> bool:

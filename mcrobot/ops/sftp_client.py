@@ -11,7 +11,7 @@ from pathlib import Path
 
 import paramiko
 
-REPO = Path(__file__).resolve().parent.parent
+from ..paths import REPO
 
 
 def cfg():

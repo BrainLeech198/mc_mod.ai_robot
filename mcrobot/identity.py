@@ -32,8 +32,7 @@ import re
 import sys
 from pathlib import Path
 
-REPO = Path(__file__).resolve().parent.parent
-VERSIONS_DIR = REPO / "version"
+from .paths import REPO, VERSIONS as VERSIONS_DIR
 ACTIVE_PATH = VERSIONS_DIR / "active.json"
 DEFAULT_VERSION = "1.20.1-forge"
 

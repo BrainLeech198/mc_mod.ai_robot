@@ -19,7 +19,7 @@ import hashlib
 import sys
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parent))
+
 from sftp_client import connect, is_dir, human  # noqa: E402
 
 # 重复 mod 的两个拷贝（全名不同，方括号前缀不同）

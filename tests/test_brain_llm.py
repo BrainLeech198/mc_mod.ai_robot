@@ -13,9 +13,9 @@ import unittest
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
-import brain as br
-import brain_llm as bl
-import memory as mem_mod
+from mcrobot.brain import protocol as br
+from mcrobot.brain import llm_brain as bl
+from mcrobot import memory as mem_mod
 
 
 def make_cfg(tmp: Path, **over):

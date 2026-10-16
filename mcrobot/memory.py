@@ -25,7 +25,7 @@ from pathlib import Path
 
 import os
 
-REPO = Path(__file__).resolve().parent.parent
+from .paths import REPO
 # 默认按 MC 版本隔离；激活了客户端预设时由 MCROBOT_MEMORY_DIR 指到该客户端的
 # <config_dir>/memory/，于是记忆跟着客户端走，换客户端不串味。
 MEM_DIR = Path(os.environ.get("MCROBOT_MEMORY_DIR")

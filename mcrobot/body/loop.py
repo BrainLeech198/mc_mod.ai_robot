@@ -25,18 +25,16 @@ import time
 from datetime import datetime, timezone
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parent))
-import control_client as cc  # noqa: E402
-import robot_chat as rc  # noqa: E402
-
-REPO = Path(__file__).resolve().parent.parent
+from . import bridge as cc
+from . import reflex as rc
+from ..paths import REPO
 CFG_PATH = REPO / "version" / "1.20.1-forge" / "robot.json"  # 未激活客户端时的默认
 
 
 def cfg_path() -> Path:
     """行为配置路径：取激活版本文件夹里的 robot.json（版本目录即身份）。"""
     try:
-        import identity as idy
+        from .. import identity as idy
         p = idy.robot_json_path()
         if p.exists():
             return p
