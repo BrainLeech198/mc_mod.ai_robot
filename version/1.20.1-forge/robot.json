@@ -31,7 +31,7 @@
       "DeepSeek"
     ]
   },
-  "brain": "bridge",
+  "brain": "api",
   "_brain": "bridge=AI(Claude Code)/预留API 走 inbox-outbox 决策；rule=纯规则即时响应（默认，简单指令自己答）。",
   "queue_all_summon": true,
   "_queue_all_summon": "true=只要被召唤就把消息交给大脑（AI/API）决策，先回一句即时回执；false=简单问题由规则自己答（问候/报位置/查在线/帮助），其余才交给大脑。",
@@ -77,7 +77,7 @@
   },
   "llm_api": {
     "_说明": "L1 大脑（tools/brain_llm.py）的端点配置。api_key 从环境变量 MCROBOT_LLM_KEY 读，不写进本文件。启用方式：python tools/brain_llm.py watch（常驻）或 once（单批）；brain=bridge 时本段被忽略（Claude Code 在线接单）。当前 endpoint 指向本机 DeepSink 伪 API 服务（sim/，:8788）；以后换真 API 只改 endpoint + model + 换 key，代码不动。timeout_seconds 必须小于 brain_timeout_seconds(45)。长期记忆在 version/1.20.1-forge/memory/robot_memory.jsonl（按 MC 版本隔离），memory_events/memory_notes 控制注入提示词的条数。",
-    "enabled": false,
+    "enabled": true,
     "provider": "openai-compatible",
     "model": "deepsink-chat",
     "endpoint": "http://127.0.0.1:8788/v1",

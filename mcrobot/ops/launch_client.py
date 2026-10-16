@@ -11,15 +11,16 @@ import uuid
 
 import minecraft_launcher_lib as mll
 
-WORKSPACE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-INSTANCE_DIR = os.path.join(WORKSPACE, "instance")
+from ..paths import REPO, INSTANCE  # 唯一路径来源：别再自己算 parent（一深就错位）
+
+WORKSPACE = str(REPO)
+INSTANCE_DIR = str(INSTANCE)
 MC_DIR = r"D:\Game\PCL 2\.minecraft"
 JAVA = r"C:\Program Files\Java\jdk-17.0.12\bin\java.exe"
 
 USERNAME = "DeepSeek"
 MEMORY = "4G"
-SERVER = "play.simpfun.cn"
-PORT = "15685"
+DEFAULT_VERSION = "1.20.1-forge"
 
 
 def find_version() -> str:
@@ -33,8 +34,21 @@ def offline_uuid(name: str) -> str:
     return str(uuid.uuid3(uuid.NAMESPACE_DNS, "OfflinePlayer:" + name))
 
 
+def server_addr(version: str = DEFAULT_VERSION) -> tuple[str, str]:
+    """服务器地址/端口以 version/<版本>/config.json 为准（别硬编码，端口会变）。"""
+    import json as _json
+    with open(os.path.join(WORKSPACE, "version", version, "config.json"),
+              encoding="utf-8") as f:
+        cfg = _json.load(f)
+    sv = cfg.get("server") or {}
+    return sv.get("host", "play.simpfun.cn"), str(sv.get("port", 15685))
+
+
 def main():
     version = find_version()
+    v = next((a for a in sys.argv if a.startswith("--version=")), None)
+    vname = v.split("=", 1)[1] if v else DEFAULT_VERSION
+    SERVER, PORT = server_addr(vname)
     options = {
         "username": USERNAME,
         "uuid": offline_uuid(USERNAME),
@@ -55,7 +69,7 @@ def main():
         return 0
     os.makedirs(INSTANCE_DIR, exist_ok=True)
     import json as _json
-    cfg_src = os.path.join(WORKSPACE, "version", "1.20.1-forge", "config.json")
+    cfg_src = os.path.join(WORKSPACE, "version", vname, "config.json")
     with open(cfg_src, encoding="utf-8") as f:
         vcfg = _json.load(f)
     mcrobot_cfg = {

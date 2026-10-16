@@ -35,6 +35,24 @@ def memory_dir(name: str | None = None) -> Path:
     return version_dir(name) / "memory"
 
 
+def load_secrets() -> None:
+    """把 instance/robot/secrets.env 灌进环境变量（key 不进 git）。
+
+    为什么要放在这里：不只控制台要读——`python -m mcrobot.brain.llm_brain watch`
+    单独跑时同样需要 key，否则端点直接 401。统一从这里加载，谁都能用。
+    已存在的环境变量优先（命令行 export 的更大）。
+    """
+    p = ROBOT_DIR / "secrets.env"
+    if not p.exists():
+        return
+    for ln in p.read_text(encoding="utf-8", errors="ignore").splitlines():
+        ln = ln.strip()
+        if not ln or ln.startswith("#") or "=" not in ln:
+            continue
+        k, v = ln.split("=", 1)
+        os.environ.setdefault(k.strip(), v.strip().strip('"').strip("'"))
+
+
 def skills_file(name: str | None = None) -> Path:
     """技能库文件（按版本隔离：换版本 = 换一套技能）。"""
     return version_dir(name) / "skills.jsonl"

@@ -52,7 +52,9 @@ from pathlib import Path
 from . import protocol as br  # inbox/outbox 协议：与 bridge 大脑共用同一套指针
 from .. import identity as idy  # 版本文件夹即身份：人格/世界常识/后端都从 version/<版本>/ 读
 from ..body import reflex as rc
-from ..paths import REPO
+from ..paths import REPO, load_secrets
+
+load_secrets()  # 命令行直接跑时也要能拿到 key（不然端点 401）
 CFG_PATH = REPO / "version" / "1.20.1-forge" / "robot.json"  # 未激活客户端时的默认
 LOG_PATH = REPO / "instance" / "robot" / "brain_llm.log"
 
@@ -93,6 +95,15 @@ class BrainError(Exception):
 
 def _now() -> str:
     return datetime.now(timezone.utc).astimezone().isoformat(timespec="seconds")
+
+
+_WEEKDAY = ("周一", "周二", "周三", "周四", "周五", "周六", "周日")
+
+
+def _now_text() -> str:
+    """给模型的真实时间（它自己不知道今天是几号，不喂就会瞎编）。"""
+    d = datetime.now()
+    return f"{d:%Y-%m-%d %H:%M} {_WEEKDAY[d.weekday()]}"
 
 
 def load_cfg(version: str | None = None) -> dict:
@@ -202,7 +213,7 @@ class Brain:
         msgs.extend(hist)
         user = f"<{speaker}> {text}"
         if env:
-            bits = []
+            bits = [f"现在时间 {_now_text()}"]
             if env.get("pos"):
                 bits.append(f"位置 {env['pos']}")
             if env.get("online"):

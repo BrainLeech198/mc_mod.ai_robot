@@ -186,8 +186,14 @@ def endpoint_ok(url: str) -> str:
     if not url:
         return "未配置"
     import urllib.error
+    # 带上 key 探测：不带 key 一律 401，会让人误判成「端点挂了」
+    headers = {}
+    key = os.environ.get("MCROBOT_LLM_KEY", "")
+    if key:
+        headers["Authorization"] = f"Bearer {key}"
+    req = urllib.request.Request(url.rstrip("/") + "/models", headers=headers)
     try:
-        with urllib.request.urlopen(url.rstrip("/") + "/models", timeout=3) as r:
+        with urllib.request.urlopen(req, timeout=3) as r:
             data = json.loads(r.read().decode("utf-8", "ignore"))
         ids = [m.get("id") for m in data.get("data", [])][:4]
         return "ok：" + "、".join(str(i) for i in ids)
@@ -234,7 +240,13 @@ def brain_stop() -> dict:
 def brain_status() -> dict:
     p = _BRAIN.get("proc")
     mine = bool(p and p.poll() is None)
-    return {"console_brain": "running" if mine else "stopped",
+    if mine:
+        st = "running"
+    elif _running("mcrobot.brain.llm_brain"):
+        st = "external"      # 不是控制台起的（比如命令行 watch），一样在接单
+    else:
+        st = "stopped"
+    return {"console_brain": st,
             "pid": p.pid if mine else None,
             "uptime": round(time.time() - _BRAIN["started"]) if mine else 0,
             "bridge_watch": _running("mcrobot.brain.bridge_brain")}
