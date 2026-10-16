@@ -1,0 +1,166 @@
+"""工具层单测：JSON Schema 形态、权限门控、行动预算、回执关联。"""
+from __future__ import annotations
+
+import json
+import tempfile
+import unittest
+from pathlib import Path
+
+from mcrobot.brain import protocol as br
+from mcrobot.tools import builtin, registry
+from mcrobot.tools.registry import CallContext, Registry, Tool, ToolResult
+
+
+class _Ctx:
+    """把 protocol 的文件路径指到临时目录，避免测试污染真实 inbox/outbox。"""
+
+    def __enter__(self):
+        self._td = tempfile.TemporaryDirectory()
+        td = Path(self._td.name)
+        self._old = (br.INBOX, br.OUTBOX, br.PTR)
+        br.INBOX = td / "inbox.jsonl"
+        br.OUTBOX = td / "outbox.jsonl"
+        br.PTR = td / "inbox.ptr"
+        self.dir = td
+        return self
+
+    def __exit__(self, *a):
+        br.INBOX, br.OUTBOX, br.PTR = self._old
+        self._td.cleanup()
+
+    def outbox(self) -> list[dict]:
+        if not br.OUTBOX.exists():
+            return []
+        return [json.loads(l) for l in br.OUTBOX.read_text(encoding="utf-8").splitlines()]
+
+
+class SpecTest(unittest.TestCase):
+    def setUp(self):
+        self.reg = builtin.build_registry()
+
+    def test_names_are_snake_case(self):
+        for n in self.reg.names():
+            self.assertRegex(n, r"^[a-z][a-z0-9_]*$", n)
+
+    def test_mcp_spec_shape(self):
+        for s in self.reg.mcp_specs():
+            self.assertEqual(set(s), {"name", "description", "inputSchema"}, s["name"])
+            self.assertEqual(s["inputSchema"].get("type"), "object")
+            self.assertIn("properties", s["inputSchema"])
+
+    def test_openai_spec_shape(self):
+        for s in self.reg.openai_specs():
+            self.assertEqual(s["type"], "function")
+            self.assertEqual(set(s["function"]), {"name", "description", "parameters"})
+
+    def test_every_tool_has_a_handler(self):
+        for n in self.reg.names():
+            self.assertIsNotNone(self.reg.tool(n).fn, n)
+
+
+class PermissionTest(unittest.TestCase):
+    def setUp(self):
+        self.reg = builtin.build_registry()
+
+    def test_dangerous_refused_for_stranger(self):
+        ctx = CallContext(actor="stranger", dry=True,
+                          dangerous_allowed=("oahnuy198",))
+        r = self.reg.call("worldedit_set", {"block": "stone"}, ctx)
+        self.assertFalse(r.ok)
+        self.assertIn("未授权", r.error)
+
+    def test_dangerous_allowed_for_owner(self):
+        ctx = CallContext(actor="oahnuy198", dry=True,
+                          dangerous_allowed=("oahnuy198",))
+        r = self.reg.call("worldedit_set", {"block": "stone"}, ctx)
+        self.assertTrue(r.ok, r.error)
+        self.assertIn("//set stone", r.text)
+
+    def test_unsafe_command_refused(self):
+        ctx = CallContext(actor="stranger", dry=True, dangerous_allowed=())
+        r = self.reg.call("run_command", {"command": "/op stranger"}, ctx)
+        self.assertFalse(r.ok)
+        self.assertIn("未授权", r.error)
+
+    def test_readonly_command_passes(self):
+        ctx = CallContext(actor="stranger", dry=True, dangerous_allowed=())
+        r = self.reg.call("run_command", {"command": "/list"}, ctx)
+        self.assertTrue(r.ok, r.error)
+
+    def test_unknown_tool(self):
+        r = self.reg.call("nope", {}, CallContext())
+        self.assertFalse(r.ok)
+        self.assertIn("未知工具", r.error)
+
+
+class BatchTest(unittest.TestCase):
+    def setUp(self):
+        self.reg = builtin.build_registry()
+
+    def test_budget_guard(self):
+        ctx = CallContext(actor="stranger", dry=True, dangerous_allowed=())
+        r = self.reg.call("run_batch", {"commands": ["/list"] * 50}, ctx)
+        self.assertFalse(r.ok)
+        self.assertIn("行动预算", r.error)
+
+    def test_stops_on_first_failure(self):
+        ctx = CallContext(actor="stranger", dry=True, dangerous_allowed=())
+        r = self.reg.call("run_batch", {"commands": ["/list", "/op me", "/list"]}, ctx)
+        results = r.data["results"]
+        self.assertEqual(len(results), 2)          # 第二条被拒即停，不再跑第三条
+        self.assertTrue(results[0]["ok"])
+        self.assertFalse(results[1]["ok"])
+
+    def test_all_ok(self):
+        ctx = CallContext(actor="stranger", dry=True, dangerous_allowed=())
+        r = self.reg.call("run_batch", {"commands": ["/list", "/data get entity @s Pos"]}, ctx)
+        self.assertTrue(r.ok)
+        self.assertEqual(len(r.data["results"]), 2)
+
+
+class SayAndLookupTest(unittest.TestCase):
+    def test_say_writes_outbox_with_action_id(self):
+        with _Ctx() as c:
+            r = builtin.REGISTRY.call("say", {"text": "你好"},
+                                      CallContext(actor="oahnuy198"))
+            self.assertTrue(r.ok)
+            self.assertEqual(len(r.action_id), 8)
+            out = c.outbox()
+            self.assertEqual(len(out), 1)
+            self.assertEqual(out[0]["say"], "你好")
+            self.assertIn("ts", out[0])
+
+    def test_block_lookup_real_catalog(self):
+        r = builtin.REGISTRY.call("block_lookup", {"query": "desk", "limit": 5},
+                                  CallContext())
+        self.assertTrue(r.ok, r.error)
+        self.assertTrue(r.data["hits"])
+        self.assertIn(":", r.data["hits"][0]["id"])   # 形如 modid:name
+
+    def test_block_lookup_miss_is_explained(self):
+        r = builtin.REGISTRY.call("block_lookup", {"query": "绝不可能的方块名xyz"},
+                                  CallContext())
+        self.assertTrue(r.ok)
+        self.assertIn("英文", r.text)
+
+
+class ResultTest(unittest.TestCase):
+    def test_exception_becomes_receipt(self):
+        def boom(_a, _c):
+            raise RuntimeError("炸了")
+
+        reg = Registry()
+        reg.register(Tool("boom", "会炸", {"type": "object", "properties": {}},
+                          registry.SAFE, boom))
+        r = reg.call("boom", {}, CallContext())
+        self.assertFalse(r.ok)
+        self.assertIn("RuntimeError", r.error)
+
+    def test_result_to_dict(self):
+        d = ToolResult(True, "t", "abc", text="ok").to_dict()
+        self.assertEqual(d["tool"], "t")
+        self.assertTrue(d["ok"])
+
+
+if __name__ == "__main__":
+    unittest.main(verbosity=2)
