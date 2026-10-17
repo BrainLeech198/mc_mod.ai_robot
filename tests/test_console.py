@@ -118,6 +118,24 @@ class ProcessDetectTest(unittest.TestCase):
         self.assertFalse(cs._running("definitely_not_a_script.py"))
 
 
+class BrainDupTest(unittest.TestCase):
+    """已经在跑的大脑不能被再起一个——两个 watch 会抢同一个 inbox 指针。"""
+    def setUp(self):
+        self._brain = dict(cs._BRAIN)
+        self._cmd = cs._cmdlines
+        cs._BRAIN.update(proc=None, started=0.0, kind="")
+
+    def tearDown(self):
+        cs._BRAIN.update(self._brain)
+        cs._cmdlines = self._cmd
+
+    def test_refuse_when_external_l1_running(self):
+        cs._cmdlines = lambda: ["python -m mcrobot.brain.llm_brain watch --timeout 7200"]
+        r = cs.brain_start()
+        self.assertFalse(r["ok"])
+        self.assertIn("已有 L1 大脑", r["msg"])
+
+
 class RouteTest(unittest.TestCase):
     def test_every_route_callable(self):
         for (m, p), fn in cs.ROUTES.items():

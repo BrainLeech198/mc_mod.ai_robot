@@ -214,6 +214,10 @@ def brain_start() -> dict:
     if _running("mcrobot.brain.bridge_brain"):
         # 两个大脑同时消费 inbox 会抢记录（手册禁区）
         return {"ok": False, "msg": "检测到 bridge 大脑（bridge_brain watch）在跑，先停它再起 L1，否则会抢消息"}
+    if _running("mcrobot.brain.llm_brain"):
+        # 不是本控制台起的（命令行 / 编排起的）。再起一个就是两个 watch 抢同一个
+        # inbox 指针：同一句话回两遍，或者一半消息被另一个吃掉。
+        return {"ok": False, "msg": "已有 L1 大脑在跑（不是控制台起的），先停它再起"}
     env = dict(os.environ)
     env["MCROBOT_MEMORY_DIR"] = str(idy.memory_dir())
     env["PYTHONIOENCODING"] = "utf-8"
