@@ -302,6 +302,9 @@ class AgenticSwitchTest(unittest.TestCase):
         br.INBOX = Path(self._tmp) / "inbox.jsonl"
         br.OUTBOX = Path(self._tmp) / "outbox.jsonl"
         br.PTR = Path(self._tmp) / "inbox.ptr"
+        # 闭环跑完会往分级表记账——指到临时文件，别污染版本里的真表
+        import os
+        os.environ["MCROBOT_CURRICULUM_FILE"] = str(Path(self._tmp) / "cur.jsonl")
 
     def tearDown(self):
         self._td.cleanup()

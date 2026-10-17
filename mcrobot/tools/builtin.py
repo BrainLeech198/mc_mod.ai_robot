@@ -201,6 +201,17 @@ def _t_review(args: dict, ctx: CallContext) -> ToolResult:
                                        f"{out['ms']}ms · 图 {shot['path']}）")
 
 
+def _t_curriculum(_args: dict, ctx: CallContext) -> ToolResult:
+    """查自己的能力分级表（只读）：每级尝试/成功/解锁状态。"""
+    from .. import curriculum
+    try:
+        rows = curriculum.stats(ctx.version)
+        text = curriculum.report(ctx.version)
+    except Exception as e:
+        return ToolResult(False, "curriculum", "", error=f"读分级表失败：{e}")
+    return ToolResult(True, "curriculum", "", data={"levels": rows}, text=text)
+
+
 def _t_get_state(_args: dict, ctx: CallContext) -> ToolResult:
     st = cc.state()
     p = st.get("player") or {}
@@ -653,6 +664,13 @@ def build_registry() -> Registry:
                         "params": {"type": "object", "description": "参数名 → 默认值"},
                         "tags": {"type": "array", "items": {"type": "string"}}},
          "required": ["name", "steps"]}, SAFE, _t_skill_save))
+
+    reg.register(Tool(
+        "curriculum",
+        "查自己的能力分级表：L1 交流感知 → L5 工程建造，每级多少次尝试/成功、解锁了没有。"
+        "玩家问你「你会干啥」「你能建房子吗」「这个你能不能搞定」时先查它，据实回答——"
+        "没解锁的级别直说还没验证过，别吹。你每次跑完的任务会自动记进去。",
+        {"type": "object", "properties": {}, "required": []}, SAFE, _t_curriculum))
 
     reg.register(Tool(
         "recall",

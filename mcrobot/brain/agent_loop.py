@@ -127,6 +127,7 @@ class AgentLoop:
                  tools_for_observation: tuple[str, ...] = ("get_state",),
                  skills_enabled: bool = True,
                  lessons_enabled: bool = True,
+                 curriculum_enabled: bool = True,
                  plan_fn: Callable[[str], list[str]] | None = None,
                  stop_on_fail: bool = True):
         self.registry = registry or build_registry()
@@ -141,6 +142,9 @@ class AgentLoop:
         # mcagent 的反思：失败沉淀成知识库里的「教训」，下次同类目标检索得到。
         # 关掉给单测用——不然每次跑失败用例都往版本知识表里写垃圾。
         self.lessons_enabled = lessons_enabled
+        # mcagent 的 curriculum：跑完的任务按难度定级记账（curriculum.jsonl），
+        # 目标超纲时给第一个子目标一句提醒。关掉给单测用（同上）。
+        self.curriculum_enabled = curriculum_enabled
         # mcagent 的任务分解：注入 plan_fn 才能拆；没注入就还是单层闭环（老行为）。
         self.plan_fn = plan_fn
         self.stop_on_fail = stop_on_fail
@@ -285,6 +289,8 @@ class AgentLoop:
         子目标默认失败即停（建造任务大多有依赖），剩下的标记成 skipped 不空跑。
         返回的 AgentState 是**汇总态**：goal 是原始目标，steps/subtasks 记录拆了啥、
         每个子目标成败如何，verdict/tool_calls/receipts 是合并后的结果。
+        跑完按难度定级记进分级表（curriculum，curriculum_enabled 可关）；
+        目标高于已验证等级时，第一个子目标的 context 里会多一句「超纲提醒」。
         """
         steps = [goal]
         if self.plan_fn:
@@ -292,10 +298,20 @@ class AgentLoop:
                 steps = list(self.plan_fn(goal) or [goal]) or [goal]
             except Exception:
                 steps = [goal]          # 拆失败不许把任务搞失败
+        # 能力分级（mcagent curriculum）：先定级；超纲时把提醒塞进第一个子目标的上下文。
+        # 分级表是诚实账不是权限门——超纲照跑，但要它步步为营、做不成就直说。
+        level, note = 1, ""
+        if self.curriculum_enabled:
+            try:
+                from .. import curriculum as cur
+                level = cur.grade(goal, steps)
+                note = cur.note(level)
+            except Exception:
+                level, note = 1, ""     # 记账失败不影响干活
         total = AgentState(goal=goal, task_id=task_id, actor=actor,
                            max_rounds=self.max_rounds,
                            dangerous_allowed=dangerous_allowed, steps=steps)
-        total.log("plan", steps=steps, n=len(steps))
+        total.log("plan", steps=steps, n=len(steps), level=level)
         done: list[str] = []            # 前序子目标的一句话结果，传给下一个
         for i, sub in enumerate(steps, 1):
             if total.aborted:
@@ -306,7 +322,8 @@ class AgentLoop:
             s = self.run(sub, actor=actor, dry=dry,
                          dangerous_allowed=dangerous_allowed,
                          task_id=f"{task_id}-{i}" if task_id else "",
-                         checkpoint=checkpoint, context="；".join(done))
+                         checkpoint=checkpoint,
+                         context=note if i == 1 else "；".join(done))
             total.subtasks.append({"goal": sub, "verdict": s.verdict or "fail",
                                    "critique": (s.critique or s.aborted or "")[:200],
                                    "round": s.round, "tool_calls": s.tool_calls,
@@ -330,6 +347,22 @@ class AgentLoop:
             t["verdict"] == "ok" for t in total.subtasks) and total.subtasks else "fail"
         if total.verdict == "fail" and not total.critique:
             total.critique = total.aborted or "有子目标没做成"
+        if self.curriculum_enabled:
+            # 只记目标级一次（子目标的成败已经在 subtasks 里）——分级账回答的是
+            # 「玩家交给它的任务做成没做成」，不是内部步骤的流水。
+            try:
+                from .. import curriculum as cur
+                cur.record(goal, total.verdict, level=level, steps=len(steps),
+                           task_id=task_id)
+                total.log("curriculum", level=level, verdict=total.verdict)
+            except Exception:
+                pass  # 记账失败不影响任务结论
+        if checkpoint and total.task_id:
+            # 汇总态也落一份（子目标各自存 <task_id>-<i>，这份是不带序号的总结）
+            try:
+                checkpoint.save(total)
+            except Exception:
+                pass
         return total
 
 

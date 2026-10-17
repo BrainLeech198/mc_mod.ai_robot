@@ -20,14 +20,15 @@ mcrobot/           代码（分层）
                    bridge_brain（L2 人肉）· agent_loop（编排/任务分解）· llm_policy（决策/自检）·
                    planner（高层目标→有序子目标）·
                    checkpoint（断点续跑）
-  tools/           工具层：registry（MCP 风格注册表）· builtin（28 个工具）· mcp_server
+  tools/           工具层：registry（MCP 风格注册表）· builtin（29 个工具）· mcp_server
   skills/          技能库：library（存取/检索/学习）· build（预置建造模板）
   knowledge.py     知识层：facts.jsonl + knowledge.md（按话题检索的事实表）
+  curriculum.py    能力分级：L1~L5 定级记账 + 逐级晋升 + 超纲提醒
   vision.py        视觉：截图 → 多模态模型 → 文字（look 工具）
   textmatch.py     中英混合检索打分（技能库/知识库共用）
   ops/             运维：supervisor · launch_client · sftp · cleanup · reply
   console/         本地网页控制台（:8901）
-tests/             单测（292 项）
+tests/             单测（322 项）
 controlmod/        Forge 客户端 mod 源码
 instance/          游戏运行时目录（不入库）
 ```
@@ -49,6 +50,7 @@ instance/          游戏运行时目录（不入库）
 - **知识层（自己的做法）**：摸出来的事实带出处记进 `facts.jsonl`，按当前话题检索后注入，查不到不塞
 - **断点续跑抄 LangGraph**：任务状态每拍落盘，同一个 task_id 可从断掉的那一拍接着跑
 - **工程纪律抄 mcagent/airi**：行动预算、失败止损、错误熔断
+- **能力分级抄 mcagent curriculum**：每个跑完的任务定级 L1~L5 记入 `curriculum.jsonl`，逐级晋升；超纲任务照跑但会收到「步步为营」的提醒——分级表是诚实账，不是权限门
 - **改文档即改 AI 的认知**：`mods.md` / `方块目录.md` 一改，下次注入的世界常识就跟着变
 
 ## 常用命令
@@ -66,6 +68,7 @@ python -m mcrobot.tools.mcp_server                      # 作为 MCP server 运�
 python -m mcrobot.skills.library install | list | search 砌墙   # 技能库
 python -m mcrobot.knowledge list | search 家具 | consolidate    # 知识库（版本内查表）
 python -m mcrobot.vision check | shot "这面墙齐不齐" | review        # 视觉（截图→多模态，review=五项评分表验收）
+python -m mcrobot.curriculum                                          # 能力分级表（mcagent curriculum）
 python -m mcrobot.brain.checkpoint list | show <task_id>        # 断点续跑存档
 ```
 

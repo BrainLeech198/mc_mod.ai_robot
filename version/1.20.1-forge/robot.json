@@ -63,6 +63,10 @@
       "_说明": "任务分解（mcagent 的 task decomposition）：高层目标先拆成 2~6 个有序子目标，再逐个跑闭环，前一个的结果作为后一个的上下文；子目标失败即停（建造任务大多有依赖），剩下的标记 skipped。闲聊/短目标会被 planner.looks_simple 挡掉，不会多花一次 LLM 往返；拆失败一律退回单步，所以它只是增值层。关掉（false）就退回单层闭环。",
       "enabled": true,
       "max_subtasks": 6
+    },
+    "curriculum": {
+      "_说明": "能力分级（mcagent 的 curriculum，mcrobot/curriculum.py）：每个跑完的任务按文本特征定级 L1~L5 追加进 version/<版本>/memory/curriculum.jsonl（append-only，只记目标级不记子目标）。晋升规则：某级成功 3 次（L5 只要 2 次）且成功率 ≥50% 才解锁，逐级跳不过。大脑只在「目标定级 > 已验证等级」时把一句超纲提醒塞进第一个子目标的上下文——分级表是给自己看的诚实账，不是权限门，超纲任务照跑但要步步为营。聊天提示词里也会带一句自我分级（据实回答『我会干啥』）。关掉（false）就不记账、不提醒、不自认知。查看：python -m mcrobot.curriculum。",
+      "enabled": true
     }
   },
   "throttle": {

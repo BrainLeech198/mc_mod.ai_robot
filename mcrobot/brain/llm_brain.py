@@ -154,6 +154,9 @@ class Brain:
         pl = ag.get("plan") or {}
         self.plan_enabled = bool(pl.get("enabled", True))
         self.plan_max = int(pl.get("max_subtasks", 6) or 6)
+        # 能力分级（mcagent curriculum）：跑完记账 + 超纲提醒 + 聊天时自我认知。
+        cu = ag.get("curriculum") or {}
+        self.curriculum_enabled = bool(cu.get("enabled", True))
 
     # ---------------- HTTP ----------------
     def _http_chat(self, messages: list[dict]) -> str:
@@ -196,7 +199,8 @@ class Brain:
 
     # ---------------- 提示词 ----------------
     def _system_content(self, extra: str = "") -> str:
-        """人格 + 世界常识 + 长期记忆（事件流 + AI 便签 + 查表事实），拼进同一条 system 消息。
+        """人格 + 世界常识 + 长期记忆（事件流 + AI 便签 + 查表事实 + 能力分级自认知），
+        拼进同一条 system 消息。
 
         有版本身份时走 idy.render_system（人格 + 自动世界常识 + 边界纪律，全部读自
         version/<版本>/ 的文档）；没有则退回内置 SYSTEM_PROMPT（单测与向后兼容）。
@@ -208,7 +212,16 @@ class Brain:
         if extra:
             mem = (mem + "\n\n" + extra).strip()
         if self.version:
-            return idy.render_system(self.version, mem)
+            content = idy.render_system(self.version, mem)
+            # 自我认知：分级表的一句话摘要（据实回答「我会干啥」，没数据就说没数据）
+            try:
+                from .. import curriculum
+                line = curriculum.summary_line(self.version)
+                if line:
+                    content += "\n\n" + line
+            except Exception:
+                pass
+            return content
         content = SYSTEM_PROMPT
         if mem:
             content += "\n\n" + mem
@@ -324,6 +337,7 @@ class Brain:
                          verify=make_verify(self._transport),
                          max_rounds=self.agentic_rounds,
                          action_budget=self.agentic_budget,
+                         curriculum_enabled=self.curriculum_enabled,
                          plan_fn=make_planner(self._transport,
                                               max_subtasks=self.plan_max)
                          if self.plan_enabled else None)

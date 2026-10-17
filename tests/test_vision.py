@@ -192,7 +192,7 @@ class LookToolTest(unittest.TestCase):
     def test_tool_registered(self):
         self.assertIn("look", self.reg.names())
         self.assertIn("review", self.reg.names())
-        self.assertEqual(len(self.reg.names()), 28)
+        self.assertEqual(len(self.reg.names()), 29)
 
     def test_look_returns_description(self):
         with mock.patch.object(cc, "screenshot", lambda max_width=854: self.shot), \

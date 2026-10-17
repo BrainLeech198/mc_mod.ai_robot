@@ -4,7 +4,9 @@
 """
 from __future__ import annotations
 
+import tempfile
 import unittest
+from pathlib import Path
 from unittest import mock
 
 from mcrobot.brain.agent_loop import AgentLoop
@@ -87,6 +89,16 @@ class DecomposeTest(unittest.TestCase):
 
 
 class RunPlanTest(unittest.TestCase):
+    def setUp(self):
+        # 分级表记账默认开着——指到临时文件，别往版本里的真表写测试垃圾
+        self._td = tempfile.TemporaryDirectory()
+        self.addCleanup(self._td.cleanup)
+        self._env = mock.patch.dict("os.environ",
+                                    {"MCROBOT_CURRICULUM_FILE":
+                                     str(Path(self._td.name) / "cur.jsonl")})
+        self._env.start()
+        self.addCleanup(self._env.stop)
+
     def _loop(self, plan=None, **kw):
         return AgentLoop(registry=_reg("say"), tools_for_observation=(),
                          decide=lambda s: [{"name": "say", "arguments": {}}],
@@ -105,7 +117,9 @@ class RunPlanTest(unittest.TestCase):
                                     or [{"name": "say", "arguments": {}}])
         s = loop.run_plan("建学校")
         self.assertEqual([g for g, _ in seen], ["第一步", "第二步", "第三步"])
-        self.assertEqual(seen[0][1], "")                       # 第一步没有前序
+        # 第一步的 context 只有分级提醒（空表 + L5 目标 = 超纲），没有前序结果
+        self.assertIn("能力分级", seen[0][1])
+        self.assertNotIn("→ok", seen[0][1])
         self.assertIn("第一步→ok", seen[1][1])                 # 第二步看得到第一步的结果
         self.assertIn("第二步→ok", seen[2][1])
         self.assertEqual(s.verdict, "ok")

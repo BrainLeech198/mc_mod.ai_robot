@@ -39,7 +39,8 @@ from ..textmatch import tokens
 # 只读/说话类工具不值得进技能（学会了也没用）
 NON_SKILL_TOOLS = frozenset({"say", "get_state", "list_players", "get_inventory",
                              "block_lookup", "skill_search", "skill_save",
-                             "recall", "remember", "screenshot", "look", "review"})
+                             "recall", "remember", "screenshot", "look", "review",
+                             "curriculum"})
 
 
 def _now() -> str:
