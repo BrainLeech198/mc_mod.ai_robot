@@ -319,9 +319,16 @@ class Brain:
         _log({"op": "agentic_done", "by": speaker, "verdict": s.verdict,
               "round": s.round, "tool_calls": s.tool_calls,
               "aborted": s.aborted, "critique": s.critique[:200]})
-        for r in s.receipts:
-            if r.ok and r.tool == "say":
-                br.emit({"say": (r.data or {}).get("text", "")})
+        # say 工具内部已经 emit 过了，这里只判断「有没有说过话」，别再发一遍
+        said = any(r.ok and r.tool == "say" for r in s.receipts)
+        if not said:
+            # 闭环跑完必须给玩家一个回音：模型常常只调动作、忘了 say，
+            # 玩家那边就是「明明在动，一声不吭」。
+            if s.verdict == "ok":
+                br.emit({"say": f"做完了，{s.round} 轮 {s.tool_calls} 步"})
+            else:
+                why = " ".join((s.critique or "没做成").split())[:44]
+                br.emit({"say": f"没搞定：{why}"})
         try:
             mem_mod.add("event", f"{speaker} 说：「{text}」→ agentic {s.verdict}"
                                  f"（{s.round} 轮/{s.tool_calls} 次调用）", by=speaker)

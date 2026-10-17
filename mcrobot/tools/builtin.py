@@ -16,6 +16,62 @@ from .registry import (DANGEROUS, SAFE, CallContext, Refused, Registry, Tool,
 # ------------------------------ 感知（只读） ------------------------------
 
 
+def _probe_points(points: list[str], block: str, timeout: float = 2.5) -> dict:
+    """用 /execute if block 探点：命中就在聊天里回一个唯一 token，再读回来。
+
+    为什么走这条路：ControlMod 还没有「读方块」原语，但服务端有 OP 就能用
+    /execute if block 把判断结果写成一条聊天，桥本来就能读聊天。
+    等于先用零 Java 改动换来一双眼睛（之后扩 mod 是正解，这是过渡）。
+    """
+    import time as _t
+    import uuid
+
+    base = int(cc.chat_since(0).get("seq") or 0)
+    tokens = {}
+    for i, p in enumerate(points):
+        tok = f"PB{uuid.uuid4().hex[:6]}"
+        tokens[tok] = p
+        # tellraw @s 只有机器人自己看得见，不会把探测 token 刷到全服聊天
+        cc.cmd(f'/execute if block {p} {block} run tellraw @s {{"text":"{tok}"}}')
+        _t.sleep(0.12)
+    hit, seen, deadline = set(), [], _t.time() + timeout
+    while _t.time() < deadline:
+        for r in cc.chat_since(base).get("chats") or []:
+            txt = str(r.get("text") or "")
+            for tok, p in tokens.items():
+                if tok in txt and tok not in hit:
+                    hit.add(tok)
+            if txt and txt not in [s["text"] for s in seen]:
+                seen.append({"text": txt[:120]})
+        if len(hit) >= len(tokens):
+            break
+        _t.sleep(0.25)
+    miss = [p for tok, p in tokens.items() if tok not in hit]
+    return {"total": len(points), "hit": len(hit),
+            "matched": [tokens[t] for t in tokens if t in hit], "missed": miss,
+            "chat_seen": seen[:6]}
+
+
+def _t_block_probe(args: dict, ctx: CallContext) -> ToolResult:
+    pts = args.get("points") or []
+    if isinstance(pts, str):
+        pts = [pts]
+    pts = [str(p).replace(",", " ").strip() for p in pts if str(p).strip()]
+    block = str(args.get("block") or "").strip()
+    if not pts:
+        return ToolResult(False, "block_probe", "", error="points 不能为空，形如 [\"30 48 -191\"]")
+    if not block:
+        return ToolResult(False, "block_probe", "", error="block 不能为空，如 stone / minecraft:oak_planks")
+    if len(pts) > 24:
+        return ToolResult(False, "block_probe", "", error="一次最多探 24 个点（省往返、防刷屏）")
+    out = _probe_points(pts, block)
+    ok = out["hit"] == out["total"]
+    text = f"{out['hit']}/{out['total']} 个点是 {block}"
+    if out["missed"]:
+        text += f"；不是 {block} 的：{', '.join(out['missed'][:6])}"
+    return ToolResult(ok, "block_probe", "", text=text, data=out)
+
+
 def _t_get_state(_args: dict, ctx: CallContext) -> ToolResult:
     st = cc.state()
     p = st.get("player") or {}
@@ -235,6 +291,18 @@ def build_registry() -> Registry:
          "properties": {"query": {"type": "string", "description": "关键词，英文优先"},
                         "limit": {"type": "integer", "default": 20}},
          "required": ["query"]}, SAFE, _t_block_lookup))
+
+    reg.register(Tool(
+        "block_probe",
+        "探测指定坐标现在是什么方块（只读，靠 /execute if block，需要机器人是 OP）。"
+        "砌完东西要自检就用它：points 填坐标列表，block 填期望方块 ID，"
+        "返回「命中数/总数」，命中不满就是没砌对。",
+        {"type": "object",
+         "properties": {
+             "points": {"type": "array", "items": {"type": "string"},
+                        "description": "坐标列表，每项形如 \"30 48 -191\" 或 \"30,48,-191\""},
+             "block": {"type": "string", "description": "期望的方块 ID，如 stone / minecraft:oak_planks"}},
+         "required": ["points", "block"]}, SAFE, _t_block_probe))
 
     reg.register(Tool(
         "say", "在游戏里说一句话（会经身体发出）。",

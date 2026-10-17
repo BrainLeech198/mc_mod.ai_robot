@@ -56,7 +56,7 @@
   "_brain_timeout_seconds": "交给大脑(桥/API)的召唤若超过这个秒数没回复，机器人自动兜底回一句，保证玩家不落空。",
   "agentic": {
     "_说明": "Voyager 式闭环：动作同步执行 → 拿回执 → 自检判成败 → 失败就带批评重试，直到 max_rounds；action_budget 是整次任务的工具调用上限（防刷）。默认关（false）走已验证的一次性回复路径；打开前先确认大脑端点可用，否则每轮都会等到超时。",
-    "enabled": false,
+    "enabled": true,
     "max_rounds": 4,
     "action_budget": 20
   },
