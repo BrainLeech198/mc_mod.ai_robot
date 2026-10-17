@@ -37,6 +37,11 @@
 ### 移动
 - 寻路交给 Baritone：goto/follow/goto_stop（聊天前缀 #，纯客户端，不进服务器） —— 机器人手册 §9.1.1 · 2026-10-17
 
+### 视觉
+- look 已接通：MiMo mimo-v2.6-flash 真吃图（响应 image_tokens>0），854×480 实测 6~19 秒 —— 真机回执（2026-10-17）
+- 推理型视觉模型 max_tokens 太小时只吐 reasoning_content、content 为空；默认给 600 —— 真机回执（2026-10-17）
+- DeepSink 会把 messages.content 拍平成文本（deepsink_server.py:_text_of），图片过不去，视觉 endpoint 必须直连上游 —— mock_api/deepsink_server.py:210 · 2026-10-17
+
 ### 验收
 - 改世界的目标必须有 block_at/scan_region 回执才算成功；区块没加载返回 loaded=false，不能当空气 —— 机器人手册 §9.2 · 2026-10-17
 

@@ -19,13 +19,14 @@ mcrobot/           代码（分层）
   brain/           大脑：protocol（inbox/outbox 契约）· llm_brain（L1 API）·
                    bridge_brain（L2 人肉）· agent_loop（编排）· llm_policy（决策/自检）·
                    checkpoint（断点续跑）
-  tools/           工具层：registry（MCP 风格注册表）· builtin（26 个工具）· mcp_server
+  tools/           工具层：registry（MCP 风格注册表）· builtin（27 个工具）· mcp_server
   skills/          技能库：library（存取/检索/学习）· build（预置建造模板）
   knowledge.py     知识层：facts.jsonl + knowledge.md（按话题检索的事实表）
+  vision.py        视觉：截图 → 多模态模型 → 文字（look 工具）
   textmatch.py     中英混合检索打分（技能库/知识库共用）
   ops/             运维：supervisor · launch_client · sftp · cleanup · reply
   console/         本地网页控制台（:8901）
-tests/             单测（242 项）
+tests/             单测（257 项）
 controlmod/        Forge 客户端 mod 源码
 instance/          游戏运行时目录（不入库）
 ```
@@ -63,6 +64,7 @@ python -m mcrobot.identity blocks desk                  # 查方块目录
 python -m mcrobot.tools.mcp_server                      # 作为 MCP server 运行（stdio）
 python -m mcrobot.skills.library install | list | search 砌墙   # 技能库
 python -m mcrobot.knowledge list | search 家具 | consolidate    # 知识库（版本内查表）
+python -m mcrobot.vision check | shot "这面墙齐不齐"                # 视觉（截图→多模态）
 python -m mcrobot.brain.checkpoint list | show <task_id>        # 断点续跑存档
 ```
 

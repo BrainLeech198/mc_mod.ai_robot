@@ -153,6 +153,30 @@ def _t_screenshot(args: dict, ctx: CallContext) -> ToolResult:
               f"抓帧 {shot['capture_ms']}ms）"))
 
 
+def _t_look(args: dict, ctx: CallContext) -> ToolResult:
+    """截一张 + 问视觉模型。给纯文本大脑补一双「审美眼」。"""
+    from .. import vision
+    q = str(args.get("question") or "").strip()
+    try:
+        default_w = vision.cfg(ctx.version)["max_width"]
+        max_width = int(args.get("max_width") or default_w)
+    except (TypeError, ValueError):
+        return ToolResult(False, "look", "", error="max_width 要给整数")
+    try:
+        shot = cc.screenshot(max_width=max_width)
+    except cc.ControlError as e:
+        return ToolResult(False, "look", "", error=str(e))
+    try:
+        out = vision.describe(shot["abs_path"], q, version=ctx.version)
+    except vision.VisionError as e:
+        return ToolResult(False, "look", "", error=f"{e}（图已存：{shot['path']}）")
+    return ToolResult(
+        True, "look", "",
+        data={"description": out["text"], "model": out["model"], "ms": out["ms"], **shot},
+        text=(f"{out['text']}（{shot['width']}×{shot['height']} · "
+              f"{out['ms']}ms · 图 {shot['path']}）"))
+
+
 def _t_get_state(_args: dict, ctx: CallContext) -> ToolResult:
     st = cc.state()
     p = st.get("player") or {}
@@ -488,6 +512,18 @@ def build_registry() -> Registry:
          "properties": {"max_width": {"type": "integer", "default": 854,
                                       "description": "输出图片最大宽度，等比缩放"}},
          "required": []}, SAFE, _t_screenshot))
+
+    reg.register(Tool(
+        "look",
+        "看一眼当前画面并让视觉模型用文字回答（截图 → 多模态模型）。"
+        "用来判断外观：歪没歪、颜色搭不搭、门洞留没留、像不像房子；"
+        "精确的方块核对仍用 block_at/scan_region（视觉会说错方块名）。"
+        "一次调用 = 一次多模态请求，别连续刷。视觉后端没配好会明确报错。",
+        {"type": "object",
+         "properties": {"question": {"type": "string",
+                                     "description": "想问什么，如「这面墙齐不齐」；留空则要一段总体描述"},
+                        "max_width": {"type": "integer", "default": 854}},
+         "required": []}, SAFE, _t_look))
 
     reg.register(Tool(
         "say", "在游戏里说一句话（会经身体发出）。",
