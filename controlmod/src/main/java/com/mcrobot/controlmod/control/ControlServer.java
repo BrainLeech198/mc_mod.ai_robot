@@ -14,9 +14,11 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
 import java.net.InetSocketAddress;
+import java.net.URLDecoder;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.util.List;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeoutException;
@@ -76,6 +78,8 @@ public class ControlServer {
                 case "/state" -> { requireGet(method); state(ex); }
                 case "/command" -> { requirePost(method); command(ex); }
                 case "/screen/close" -> { requirePost(method); screenClose(ex); }
+                case "/blocks" -> { requireGet(method); blocks(ex); }
+                case "/looking" -> { requireGet(method); looking(ex); }
                 case "/chat" -> {
                     if (method.equals("GET")) chatSince(ex);
                     else if (method.equals("POST")) chatSend(ex);
@@ -198,6 +202,113 @@ public class ControlServer {
             Thread.currentThread().interrupt();
             throw new HttpError(503, "interrupted");
         }
+    }
+
+    private void blocks(HttpExchange ex) throws IOException {
+        Integer x = queryInt(ex, "x");
+        Integer y = queryInt(ex, "y");
+        Integer z = queryInt(ex, "z");
+        Integer x1 = queryInt(ex, "x1");
+        Integer y1 = queryInt(ex, "y1");
+        Integer z1 = queryInt(ex, "z1");
+        Integer x2 = queryInt(ex, "x2");
+        Integer y2 = queryInt(ex, "y2");
+        Integer z2 = queryInt(ex, "z2");
+
+        if (x != null || y != null || z != null) {
+            if (x == null || y == null || z == null) {
+                throw new HttpError(400, "single block needs x,y,z");
+            }
+            JsonObject o = blockJson(awaitBridge(bridge.blockAt(x, y, z)));
+            o.addProperty("ok", true);
+            send(ex, 200, o);
+            return;
+        }
+        if (x1 == null || y1 == null || z1 == null || x2 == null || y2 == null || z2 == null) {
+            throw new HttpError(400, "need x,y,z or x1,y1,z1,x2,y2,z2");
+        }
+        long volume = (long) (Math.abs(x2 - x1) + 1)
+                * (Math.abs(y2 - y1) + 1) * (Math.abs(z2 - z1) + 1);
+        if (volume > 4096) {
+            throw new HttpError(400, "area too large: " + volume + " blocks (max 4096)");
+        }
+        int limit = Math.min(Math.max(queryIntOr(ex, "limit", 512), 1), 4096);
+        WorldView.Area area = awaitBridge(bridge.blocksInBox(x1, y1, z1, x2, y2, z2, limit));
+        JsonObject o = new JsonObject();
+        o.addProperty("ok", true);
+        o.addProperty("total", area.total());
+        o.addProperty("returned", area.blocks().size());
+        o.addProperty("truncated", area.truncated());
+        JsonArray arr = new JsonArray();
+        for (WorldView.BlockAt b : area.blocks()) arr.add(blockJson(b));
+        o.add("blocks", arr);
+        send(ex, 200, o);
+    }
+
+    private void looking(HttpExchange ex) throws IOException {
+        WorldView.Hit hit = awaitBridge(bridge.lookingAt());
+        JsonObject o = new JsonObject();
+        o.addProperty("ok", true);
+        o.addProperty("type", hit.type());
+        if (!hit.type().equals("none")) {
+            o.addProperty("id", hit.id());
+            o.addProperty("x", hit.x());
+            o.addProperty("y", hit.y());
+            o.addProperty("z", hit.z());
+            o.addProperty("distance", Math.round(hit.distance() * 10.0) / 10.0);
+        }
+        send(ex, 200, o);
+    }
+
+    private <T> T awaitBridge(CompletableFuture<T> future) {
+        try {
+            return bridge.await(future);
+        } catch (TimeoutException e) {
+            throw new HttpError(503, "timeout");
+        } catch (ExecutionException e) {
+            if (e.getCause() instanceof NotInGameException) throw new HttpError(409, "not in game");
+            throw new HttpError(503, "query failed: " + e.getCause());
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new HttpError(503, "interrupted");
+        }
+    }
+
+    private static Integer queryInt(HttpExchange ex, String name) {
+        String v = queryParam(ex, name);
+        if (v == null || v.isBlank()) return null;
+        try {
+            return Integer.parseInt(v.trim());
+        } catch (NumberFormatException e) {
+            throw new HttpError(400, "bad " + name);
+        }
+    }
+
+    private static int queryIntOr(HttpExchange ex, String name, int fallback) {
+        Integer v = queryInt(ex, name);
+        return v == null ? fallback : v;
+    }
+
+    private static String queryParam(HttpExchange ex, String name) {
+        String q = ex.getRequestURI().getRawQuery();
+        if (q == null) return null;
+        for (String pair : q.split("&")) {
+            int eq = pair.indexOf('=');
+            if (eq > 0 && pair.substring(0, eq).equals(name)) {
+                return URLDecoder.decode(pair.substring(eq + 1), StandardCharsets.UTF_8);
+            }
+        }
+        return null;
+    }
+
+    private static JsonObject blockJson(WorldView.BlockAt b) {
+        JsonObject o = new JsonObject();
+        o.addProperty("x", b.x());
+        o.addProperty("y", b.y());
+        o.addProperty("z", b.z());
+        o.addProperty("id", b.id());
+        o.addProperty("loaded", b.loaded());
+        return o;
     }
 
     private static void requireJson(HttpExchange ex) {

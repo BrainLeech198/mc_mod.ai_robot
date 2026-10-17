@@ -72,6 +72,71 @@ def _t_block_probe(args: dict, ctx: CallContext) -> ToolResult:
     return ToolResult(ok, "block_probe", "", text=text, data=out)
 
 
+def _parse_int_pos(text: str) -> tuple[int, int, int]:
+    parts = str(text).replace(",", " ").split()
+    if len(parts) != 3:
+        raise ValueError(f"坐标要三个数：{text}")
+    return tuple(int(float(p)) for p in parts)  # type: ignore[return-value]
+
+
+def _t_block_at(args: dict, ctx: CallContext) -> ToolResult:
+    try:
+        x, y, z = int(args["x"]), int(args["y"]), int(args["z"])
+    except (KeyError, TypeError, ValueError):
+        return ToolResult(False, "block_at", "", error="x/y/z 都要给整数")
+    try:
+        b = cc.block_at(x, y, z)
+    except cc.ControlError as e:
+        return ToolResult(False, "block_at", "", error=str(e))
+    if not b.get("loaded"):
+        return ToolResult(True, "block_at", "", data=b,
+                          text=f"({x},{y},{z}) 所在区块还没加载，读不到（不是空气）")
+    return ToolResult(True, "block_at", "", data=b, text=f"({x},{y},{z}) = {b.get('id')}")
+
+
+def _t_scan_region(args: dict, ctx: CallContext) -> ToolResult:
+    try:
+        p1 = _parse_int_pos(args["pos1"])
+        p2 = _parse_int_pos(args["pos2"])
+    except (KeyError, ValueError) as e:
+        return ToolResult(False, "scan_region", "", error=f"pos1/pos2 要形如 'x y z'：{e}")
+    try:
+        r = cc.blocks_in_box(*p1, *p2, limit=int(args.get("limit") or 512))
+    except cc.ControlError as e:
+        return ToolResult(False, "scan_region", "", error=str(e))
+    blocks = r.get("blocks") or []
+    counts: dict[str, int] = {}
+    for b in blocks:
+        key = b.get("id") if b.get("loaded") else ""
+        counts[key] = counts.get(key, 0) + 1
+    unloaded = sum(1 for b in blocks if not b.get("loaded"))
+    head = (f"{r.get('total')} 格，返回 {len(blocks)} 格"
+            + ("（已截断）" if r.get("truncated") else "")
+            + (f"，其中 {unloaded} 格未加载" if unloaded else ""))
+    if len(blocks) <= 40:
+        lines = [f"({b['x']},{b['y']},{b['z']}) = {b['id'] if b.get('loaded') else '未加载'}"
+                 for b in blocks]
+    else:
+        lines = [f"{k or '未加载'} x{v}"
+                 for k, v in sorted(counts.items(), key=lambda kv: -kv[1])[:12]]
+    return ToolResult(True, "scan_region", "", data={**r, "counts": counts},
+                      text=head + "\n" + "\n".join(lines))
+
+
+def _t_looking_at(_args: dict, ctx: CallContext) -> ToolResult:
+    try:
+        h = cc.looking_at()
+    except cc.ControlError as e:
+        return ToolResult(False, "looking_at", "", error=str(e))
+    kind = h.get("type")
+    if kind == "none":
+        return ToolResult(True, "looking_at", "", data=h, text="准星没对着任何方块或实体")
+    what = "方块" if kind == "block" else "实体"
+    return ToolResult(True, "looking_at", "", data=h,
+                      text=f"准星对着{what} {h.get('id')} @ "
+                           f"({h.get('x')},{h.get('y')},{h.get('z')})，距离 {h.get('distance')}")
+
+
 def _t_get_state(_args: dict, ctx: CallContext) -> ToolResult:
     st = cc.state()
     p = st.get("player") or {}
@@ -187,6 +252,36 @@ def _t_we_select(args: dict, ctx: CallContext) -> ToolResult:
 
 def _t_we_undo(_args: dict, ctx: CallContext) -> ToolResult:
     return _run_one("//undo", ctx)
+
+
+# ------------------------------ 移动（Baritone） ------------------------------
+
+
+def _t_goto(args: dict, ctx: CallContext) -> ToolResult:
+    """Baritone 寻路。#goto 是聊天前缀，必须走 cc.chat；走 cc.cmd 会变成 /goto。"""
+    try:
+        x, y, z = float(args["x"]), float(args["y"]), float(args["z"])
+    except (KeyError, TypeError, ValueError):
+        return ToolResult(False, "goto", "", error="x/y/z 都要给数字")
+    if ctx.dry:
+        return ToolResult(True, "goto", "", text=f"[dry] 会走到 {x:g} {y:g} {z:g}")
+    out = cc.chat(f"#goto {x:g} {y:g} {z:g}")
+    ok = bool(out.get("ok")) if isinstance(out, dict) else True
+    return ToolResult(ok, "goto", "", data={"target": [x, y, z]},
+                      text=f"Baritone 已出发去 ({x:g}, {y:g}, {z:g})；走完用 get_state 看是否到位")
+
+
+def _t_goto_stop(_args: dict, ctx: CallContext) -> ToolResult:
+    cc.chat("#stop")
+    return ToolResult(True, "goto_stop", "", text="已让 Baritone 停手")
+
+
+def _t_follow(args: dict, ctx: CallContext) -> ToolResult:
+    who = str(args.get("player") or "").strip()
+    if not who:
+        return ToolResult(False, "follow", "", error="player 为空")
+    cc.chat(f"#follow {who}")
+    return ToolResult(True, "follow", "", text=f"Baritone 开始跟随 {who}（用 goto_stop 停）")
 
 
 # ------------------------------ 技能库 ------------------------------
@@ -305,6 +400,29 @@ def build_registry() -> Registry:
          "required": ["points", "block"]}, SAFE, _t_block_probe))
 
     reg.register(Tool(
+        "block_at",
+        "读指定坐标现在是什么方块（客户端本地读，毫秒级，不需要 OP）。"
+        "验收砌墙/建造时优先用它，逐点核对；命令回执说成功不等于方块真的变了。"
+        "区块没加载会明确返回 loaded=false，不能当空气。",
+        {"type": "object",
+         "properties": {"x": {"type": "integer"}, "y": {"type": "integer"},
+                        "z": {"type": "integer"}},
+         "required": ["x", "y", "z"]}, SAFE, _t_block_at))
+    reg.register(Tool(
+        "scan_region",
+        "读一个长方体区域内的方块（含端点），返回逐格坐标+ID（格数多时给统计）。"
+        "适合验收整面墙/整间房：一次拿全，比逐点探快。上限 4096 格。",
+        {"type": "object",
+         "properties": {"pos1": {"type": "string", "description": "形如 '30 48 -191'"},
+                        "pos2": {"type": "string", "description": "形如 '34 50 -191'"},
+                        "limit": {"type": "integer", "default": 512}},
+         "required": ["pos1", "pos2"]}, SAFE, _t_scan_region))
+    reg.register(Tool(
+        "looking_at",
+        "读准星当前对准的方块或实体（含坐标和距离）。",
+        {"type": "object", "properties": {}, "required": []}, SAFE, _t_looking_at))
+
+    reg.register(Tool(
         "say", "在游戏里说一句话（会经身体发出）。",
         {"type": "object",
          "properties": {"text": {"type": "string", "description": "要说的原话"}},
@@ -322,6 +440,23 @@ def build_registry() -> Registry:
          "properties": {"commands": {"type": "array", "items": {"type": "string"}},
                         "budget": {"type": "integer", "default": 20}},
          "required": ["commands"]}, SAFE, _t_run_batch))
+
+    reg.register(Tool(
+        "goto",
+        "让 Baritone 寻路走到指定坐标（会绕障碍、跳坑）。只负责走，不改方块。"
+        "异步：返回后它还在走，要确认到位就再调 get_state 看坐标。",
+        {"type": "object",
+         "properties": {"x": {"type": "number"}, "y": {"type": "number"},
+                        "z": {"type": "number"}},
+         "required": ["x", "y", "z"]}, SAFE, _t_goto))
+    reg.register(Tool(
+        "goto_stop", "让 Baritone 立刻停下（停走 / 停跟随）。",
+        {"type": "object", "properties": {}, "required": []}, SAFE, _t_goto_stop))
+    reg.register(Tool(
+        "follow", "让 Baritone 跟随指定玩家（用 goto_stop 停）。",
+        {"type": "object",
+         "properties": {"player": {"type": "string"}},
+         "required": ["player"]}, SAFE, _t_follow))
 
     reg.register(Tool(
         "worldedit_select",

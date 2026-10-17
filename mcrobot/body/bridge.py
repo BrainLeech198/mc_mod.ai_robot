@@ -65,6 +65,23 @@ def cmd(command):
     return _request("POST", "/command", {"command": command})
 
 
+def block_at(x, y, z):
+    """读单个方块。loaded=false 表示区块没加载，不能当空气。"""
+    return _request("GET", f"/blocks?x={int(x)}&y={int(y)}&z={int(z)}")
+
+
+def blocks_in_box(x1, y1, z1, x2, y2, z2, limit=512):
+    """读长方体区域（含端点）。服务端上限 4096 格。"""
+    q = (f"/blocks?x1={int(x1)}&y1={int(y1)}&z1={int(z1)}"
+         f"&x2={int(x2)}&y2={int(y2)}&z2={int(z2)}&limit={int(limit)}")
+    return _request("GET", q)
+
+
+def looking_at():
+    """准星指向的方块/实体。"""
+    return _request("GET", "/looking")
+
+
 def close():
     return _request("POST", "/screen/close")
 

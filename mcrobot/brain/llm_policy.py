@@ -25,9 +25,11 @@ DECIDE_SYSTEM = """你是 Minecraft 里一个真玩家 AI 的行动决策器。
 - 要跟玩家说话就用 say；只需要说话时数组里就只放 say。
 - 一次回合尽量把能合并的指令放进 run_batch（省往返）。
 - 上一轮批评说哪里没做到，这一轮就先补哪里。
+- 要走到某处就调 goto(x,y,z)，别用 /tp 或 /execute tp：goto 是客户端真走路，服务器看到的是正常移动。
+  它是异步的，出发后不要立刻做依赖位置的事；先用 get_state 确认到了再动手。
 - 拿不准方块 ID 就先 block_lookup（目录里的显示名是英文）。
-- 改过世界（砌/挖/替换）之后，用 block_probe 探几个点确认真的变成了目标方块；
-  命令返回 ok 只代表发出去了，不代表改对了。
+- 改过世界（砌/挖/替换）之后必须验：单点用 block_at，整面墙/整间房用 scan_region
+  （一次拿逐格坐标，比 block_probe 快且不需要 OP）；命令返回 ok 只代表发出去了，不代表改对了。
 - 观察里的 skills 是**已经做成过**的技能模板：有能对上的就用 skill_run 跑它（参数填全），
   别从头现搓；没有就按工具一步步做，做成了可以 skill_save 存下来。
 - 不要输出 JSON 之外的任何文字。
@@ -45,7 +47,7 @@ VERIFY_SYSTEM = """你是 Minecraft 里一个真玩家 AI 的自检裁判。
 
 规则：
 - 只根据回执判断，不许臆测没发生的事。
-- 改过世界的任务，回执里必须有 block_probe 之类的**世界查询**，且命中数等于总数；
+- 改过世界的任务，回执里必须有 block_at / scan_region 之类的**世界读取**，且看到的结果符合目标；
   只有「命令返回 ok」不算做成了。
 - 有失败回执（未授权、报错）一律 ok:false。
 - critique 要具体到能指导下一步，别写空话。
@@ -259,11 +261,13 @@ def make_verify(ask: Callable[[list[dict]], str],
         ok = bool(obj.get("ok"))
         critique = str(obj.get("critique") or "")
         if ok and _needs_world_evidence(s.goal):
-            # 硬闸：改世界的任务必须留下 block_probe 回执。
+            # 硬闸：改世界的任务必须留下世界读取回执（新接口优先，block_probe 兜底）。
             # 模型会自相矛盾（ok:true 配一段「没验证」的批评），也会凭
             # 「命令返回 ok」就宣布完成——真机上把 0/15 判成成功过。
-            probe = [r for r in s.receipts if r.tool == "block_probe" and r.ok]
+            probe = [r for r in s.receipts
+                     if r.tool in ("block_at", "scan_region", "block_probe") and r.ok]
             if not probe:
-                return False, "没有任何 block_probe 回执，不能算改对了；先探点确认命中数=总数"
+                return False, ("没有任何世界读取回执（block_at / scan_region），"
+                               "不能算改对了；先读坐标确认再回答")
         return ok, critique
     return verify

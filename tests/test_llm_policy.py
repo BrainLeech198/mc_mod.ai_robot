@@ -116,7 +116,7 @@ class PolicyTest(unittest.TestCase):
         verify = make_verify(self._ask('{"ok": true}'))
         ok, critique = verify(_FakeState(goal="砌一面石头墙", receipts=[_r(True, "run_command")]))
         self.assertFalse(ok)
-        self.assertIn("block_probe", critique)
+        self.assertIn("世界读取", critique)
 
     def test_verify_ok_with_probe_passes(self):
         verify = make_verify(self._ask('{"ok": true}'))

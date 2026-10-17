@@ -28,6 +28,23 @@ class ControlServerTest {
         public void sendCommand(String c) { if (!inGame) throw new NotInGameException(); commands.add(c); }
         public void sendChat(String t) { if (!inGame) throw new NotInGameException(); chats.add(t); }
         public void closeScreen() { if (!inGame) throw new NotInGameException(); closeCount++; }
+
+        public WorldView.BlockAt blockAt(int x, int y, int z) {
+            if (!inGame) throw new NotInGameException();
+            return new WorldView.BlockAt(x, y, z, "minecraft:stone", true);
+        }
+
+        public WorldView.Area blocksInBox(int x1, int y1, int z1, int x2, int y2, int z2, int limit) {
+            if (!inGame) throw new NotInGameException();
+            List<WorldView.BlockAt> out = new ArrayList<>();
+            out.add(blockAt(x1, y1, z1));
+            return new WorldView.Area(out, 1, false);
+        }
+
+        public WorldView.Hit lookingAt() {
+            if (!inGame) throw new NotInGameException();
+            return new WorldView.Hit("block", "minecraft:stone", 10, 64, -3, 2.5);
+        }
     }
 
     FakeActions actions;
@@ -173,5 +190,29 @@ class ControlServerTest {
         actions.inGame = false;
         HttpResponse<String> r = post("/screen/close", "{}");
         assertEquals(409, r.statusCode());
+    }
+
+    @Test void blocksSingle() throws Exception {
+        HttpResponse<String> r = get("/blocks?x=10&y=64&z=-3");
+        assertEquals(200, r.statusCode());
+        JsonObject o = json(r);
+        assertTrue(o.get("ok").getAsBoolean());
+        assertEquals("minecraft:stone", o.get("id").getAsString());
+        assertTrue(o.get("loaded").getAsBoolean());
+    }
+
+    @Test void blocksAreaAndTooLarge() throws Exception {
+        HttpResponse<String> ok = get("/blocks?x1=0&y1=0&z1=0&x2=1&y2=1&z2=1");
+        assertEquals(200, ok.statusCode());
+        assertEquals(1, json(ok).get("total").getAsInt());
+
+        HttpResponse<String> big = get("/blocks?x1=0&y1=0&z1=0&x2=99&y2=99&z2=99");
+        assertEquals(400, big.statusCode());
+    }
+
+    @Test void lookingAtBlock() throws Exception {
+        JsonObject o = json(get("/looking"));
+        assertEquals("block", o.get("type").getAsString());
+        assertEquals("minecraft:stone", o.get("id").getAsString());
     }
 }

@@ -4,6 +4,7 @@ from __future__ import annotations
 import json
 import tempfile
 import unittest
+from unittest import mock
 from pathlib import Path
 
 from mcrobot.brain import protocol as br
@@ -142,6 +143,32 @@ class SayAndLookupTest(unittest.TestCase):
                                   CallContext())
         self.assertTrue(r.ok)
         self.assertIn("英文", r.text)
+
+
+class BaritoneTest(unittest.TestCase):
+    """Baritone 是聊天前缀（#goto），不是原版命令（/goto）——走错通道就是静默无效。"""
+
+    def setUp(self):
+        self.reg = builtin.build_registry()
+
+    def test_goto_uses_chat_prefix(self):
+        with mock.patch.object(builtin.cc, "chat",
+                               return_value={"ok": True}) as m:
+            r = self.reg.call("goto", {"x": 27, "y": -56, "z": -191}, CallContext())
+        self.assertTrue(r.ok, r.error)
+        m.assert_called_once_with("#goto 27 -56 -191")
+
+    def test_goto_rejects_missing_coords(self):
+        r = self.reg.call("goto", {"x": 1}, CallContext())
+        self.assertFalse(r.ok)
+        self.assertIn("数字", r.error)
+
+    def test_stop_and_follow(self):
+        with mock.patch.object(builtin.cc, "chat",
+                               return_value={"ok": True}) as m:
+            self.reg.call("goto_stop", {}, CallContext())
+            self.reg.call("follow", {"player": "oahnuy198"}, CallContext())
+        self.assertEqual([c.args[0] for c in m.call_args_list], ["#stop", "#follow oahnuy198"])
 
 
 class ResultTest(unittest.TestCase):

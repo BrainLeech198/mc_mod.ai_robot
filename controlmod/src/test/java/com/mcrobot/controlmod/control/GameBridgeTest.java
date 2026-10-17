@@ -21,6 +21,18 @@ class GameBridgeTest {
         public void sendCommand(String c) { if (!inGame) throw new NotInGameException(); commands.add(c); }
         public void sendChat(String t) { if (!inGame) throw new NotInGameException(); chats.add(t); }
         public void closeScreen() { if (!inGame) throw new NotInGameException(); closeCount++; }
+        public WorldView.BlockAt blockAt(int x, int y, int z) {
+            if (!inGame) throw new NotInGameException();
+            return new WorldView.BlockAt(x, y, z, "minecraft:stone", true);
+        }
+        public WorldView.Area blocksInBox(int x1, int y1, int z1, int x2, int y2, int z2, int limit) {
+            if (!inGame) throw new NotInGameException();
+            return new WorldView.Area(List.of(blockAt(x1, y1, z1)), 1, false);
+        }
+        public WorldView.Hit lookingAt() {
+            if (!inGame) throw new NotInGameException();
+            return WorldView.Hit.none();
+        }
     }
 
     private static final GameBridge.MainThread DIRECT = Runnable::run;
@@ -65,6 +77,9 @@ class GameBridgeTest {
             public void sendCommand(String c) {}
             public void sendChat(String t) {}
             public void closeScreen() {}
+            public WorldView.BlockAt blockAt(int x, int y, int z) { return null; }
+            public WorldView.Area blocksInBox(int x1, int y1, int z1, int x2, int y2, int z2, int limit) { return null; }
+            public WorldView.Hit lookingAt() { return null; }
         };
         ExecutorService ex = Executors.newSingleThreadExecutor(r -> new Thread(r, "fake-main"));
         try {
