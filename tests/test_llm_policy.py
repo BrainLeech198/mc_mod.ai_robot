@@ -131,6 +131,30 @@ class PolicyTest(unittest.TestCase):
         self.assertFalse(ok)
         self.assertIn("没有执行", critique)
 
+    def test_verify_prompt_warns_against_over_generalizing_misses(self):
+        # 根因②：验收轮把「不是目标方块」扩大成「还有 N 格要改」，
+        # 于是把好石头覆盖成圆石。提示词必须堵这个。
+        verify = make_verify(self._ask('{"ok": true}'))
+        verify(_FakeState(goal="核对该格确认", receipts=[_r(True, "block_probe")]))
+        system = self.seen[0][0]["content"]
+        self.assertIn("不等于缺陷", system)
+        self.assertIn("验收标准", system)
+
+    def test_decide_prompt_warns_against_acting_on_phantom_misses(self):
+        decide = make_decide(self._ask("[]"), self.reg)
+        decide(_FakeState(goal="核对该格确认"))
+        system = self.seen[0][0]["content"]
+        self.assertIn("不是 X 是正常的", system)
+        self.assertIn("只读", system)
+
+    def test_read_only_state_shows_constraint_in_prompt(self):
+        # 根因③：只读轮的约束要摆在模型眼前（代码硬闸之外的第一道）
+        decide = make_decide(self._ask("[]"), self.reg)
+        decide(_FakeState(goal="核对该格确认", read_only=True))
+        body = self.seen[0][-1]["content"]
+        self.assertIn("只读轮", body)
+        self.assertIn("改世界工具会被系统拒收", body)
+
 
 class ClosedLoopTest(unittest.TestCase):
     """decide → act → verify → critique → decide ... 真跑一遍。"""
@@ -180,7 +204,8 @@ def _r(ok: bool, tool: str = "t"):
 
 
 class _FakeState:
-    def __init__(self, goal="目标", receipts=None, actor="oahnuy198"):
+    def __init__(self, goal="目标", receipts=None, actor="oahnuy198",
+                 read_only=False):
         self.goal = goal
         self.receipts = receipts or []
         self.actor = actor
@@ -189,6 +214,7 @@ class _FakeState:
         self.round = 1
         self.max_rounds = 4
         self.dangerous_allowed = ()
+        self.read_only = read_only
 
     def log(self, *a, **k):
         pass

@@ -27,6 +27,38 @@ from ..tools.registry import CallContext, Registry, ToolResult
 
 END = None
 
+# ---------------- 核对轮只读（2026-10-17 补墙事故的硬约束） ----------------
+# 事故：L3 补墙任务的验收子目标「block_probe核对该格确认」失败后，模型在
+# 下一轮发起 run_batch，把 6 格好端端的石头覆盖成了圆石——验收轮自己把墙
+# 打坏了。所以验收型子目标只许读和说：真发现问题就如实报 fail，让
+# stop_on_fail 停下来，修是下一个子目标（或人）的事。
+_VERIFY_WORDS = ("核对", "确认", "检查", "验证", "自检", "是否", "有没有", "在不在")
+_ACTION_WORDS = ("补", "修", "放", "换", "砌", "挖", "拆", "填", "铺", "装", "清理",
+                 "建造", "放置", "set", "build", "place", "replace", "fill")
+# 会改世界的工具。不能按 registry 的 risk 判——run_command/run_batch/skill_run
+# 都注册成 SAFE（它们按条命令过白名单门控），但照样能 //set / /setblock。
+_WORLD_TOOLS = frozenset({
+    "run_command", "run_batch",             # 任意指令（含 //set / /setblock）
+    "worldedit_set", "worldedit_replace", "worldedit_undo",
+    "skill_run",                            # 技能就是一串改世界指令
+})
+
+
+def is_verification_goal(goal: str) -> bool:
+    """这个子目标是不是「纯核对」：有核对词、且没有任何动作词。
+
+    「核对该格确认」= 纯核对（只读）；「核对并补上」带动作词，不算——
+    那种就该正常跑，让它改。保守方向：认不出来就不锁，锁的必须是
+    铁定只该读的子目标（锁错会挡合法修复，比漏锁代价大）。
+    """
+    g = " ".join((goal or "").split()).lower()
+    if not g:
+        return False
+    # 「补丁」是名词不是动作：先mask掉再查动作词（同 curriculum 处理「建筑」）
+    g = g.replace("补丁", "◻")
+    return (any(w in g for w in _VERIFY_WORDS)
+            and not any(w in g for w in _ACTION_WORDS))
+
 
 @dataclass
 class AgentState:
@@ -51,6 +83,9 @@ class AgentState:
     steps: list[str] = field(default_factory=list)
     subtasks: list[dict] = field(default_factory=list)
     context: str = ""
+    # 只读轮（核对/确认类子目标）：act 会拒收改世界工具（见 _WORLD_TOOLS）。
+    # 序列化是为了断点续跑不丢约束。
+    read_only: bool = False
     trace: list[dict] = field(default_factory=list)
 
     def log(self, node: str, **kv: Any):
@@ -64,7 +99,7 @@ class AgentState:
                 "plan": self.plan, "actions": self.actions,
                 "critique": self.critique, "aborted": self.aborted,
                 "steps": self.steps, "subtasks": self.subtasks,
-                "context": self.context,
+                "context": self.context, "read_only": self.read_only,
                 "receipts": [r.to_dict() for r in self.receipts],
                 "trace": self.trace}
 
@@ -82,6 +117,7 @@ class AgentState:
                 plan=d.get("plan") or [], actions=d.get("actions") or [],
                 steps=d.get("steps") or [], subtasks=d.get("subtasks") or [],
                 context=d.get("context") or "",
+                read_only=bool(d.get("read_only")),
                 trace=d.get("trace") or [])
         for r in d.get("receipts") or []:
             s.receipts.append(ToolResult(bool(r.get("ok")), r.get("tool") or "",
@@ -195,9 +231,20 @@ class AgentLoop:
                 s.aborted = f"行动预算用尽（{self.action_budget} 次），停手"
                 s.log("act", aborted=s.aborted)
                 return
+            name = call.get("name") or ""
+            if s.read_only and name in _WORLD_TOOLS:
+                # 核对轮只读（硬约束）：不执行、不计预算、不进 actions
+                # （被拒的调用不是真动作，不配学技能），但记回执——让模型
+                # 看见「我想改但被挡住」，下轮要么只读重验、要么如实报失败。
+                r = ToolResult(False, name, "",
+                               error="核对轮只读：验收子目标不许改世界（只能读取和说话）；"
+                                     "真发现问题就如实报没核对过，让计划停下来")
+                s.receipts.append(r)
+                s.log("act", tool=name, ok=False, refused="read_only")
+                break  # 失败止损：被拒就停，不继续刷后面的
             s.tool_calls += 1
-            r = self.registry.call(call.get("name") or "", call.get("arguments"), ctx)
-            s.actions.append({"name": call.get("name") or "",
+            r = self.registry.call(name, call.get("arguments"), ctx)
+            s.actions.append({"name": name,
                               "arguments": call.get("arguments") or {}})
             s.receipts.append(r)
             s.log("act", tool=r.tool, ok=r.ok, action_id=r.action_id,
@@ -216,11 +263,13 @@ class AgentLoop:
 
     def run(self, goal: str, *, actor: str = "", dry: bool = False,
             dangerous_allowed: tuple[str, ...] = (), task_id: str = "",
-            checkpoint=None, context: str = "") -> AgentState:
+            checkpoint=None, context: str = "",
+            read_only: bool = False) -> AgentState:
         """跑一次任务。给了 checkpoint 就每拍落盘；同 task_id 有存档则从存档续跑。
 
         context 是任务分解时前序子目标的结果摘要，只作为文字上下文传给 decide
         （`render_state` 会渲染），不参与状态恢复之外的任何逻辑。
+        read_only=True 时这是核对/确认类子目标：act 拒收改世界工具（见 _WORLD_TOOLS）。
         """
         s = None
         if checkpoint and task_id:
@@ -231,7 +280,7 @@ class AgentLoop:
             s = AgentState(goal=goal, task_id=task_id, actor=actor,
                            max_rounds=self.max_rounds,
                            dangerous_allowed=dangerous_allowed,
-                           context=context or "")
+                           context=context or "", read_only=read_only)
         ctx = CallContext(actor=actor, dry=dry, dangerous_allowed=dangerous_allowed)
         node = next_node(s)
         while node is not END:
@@ -287,6 +336,8 @@ class AgentLoop:
 
         没有注入 plan_fn 时退化成单步（= 老行为），所以 planner 永远是增值层。
         子目标默认失败即停（建造任务大多有依赖），剩下的标记成 skipped 不空跑。
+        **核对/确认类子目标自动只读**（is_verification_goal）：验收轮不许改世界——
+        2026-10-17 补墙事故里模型就是在验收步把好石头覆盖成圆石的。
         返回的 AgentState 是**汇总态**：goal 是原始目标，steps/subtasks 记录拆了啥、
         每个子目标成败如何，verdict/tool_calls/receipts 是合并后的结果。
         跑完按难度定级记进分级表（curriculum，curriculum_enabled 可关）；
@@ -323,7 +374,8 @@ class AgentLoop:
                          dangerous_allowed=dangerous_allowed,
                          task_id=f"{task_id}-{i}" if task_id else "",
                          checkpoint=checkpoint,
-                         context=note if i == 1 else "；".join(done))
+                         context=note if i == 1 else "；".join(done),
+                         read_only=is_verification_goal(sub))
             total.subtasks.append({"goal": sub, "verdict": s.verdict or "fail",
                                    "critique": (s.critique or s.aborted or "")[:200],
                                    "round": s.round, "tool_calls": s.tool_calls,

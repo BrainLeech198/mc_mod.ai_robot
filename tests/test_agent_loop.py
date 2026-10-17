@@ -3,7 +3,8 @@ from __future__ import annotations
 
 import unittest
 
-from mcrobot.brain.agent_loop import AgentLoop, AgentState, next_node
+from mcrobot.brain.agent_loop import (AgentLoop, AgentState, is_verification_goal,
+                                      next_node)
 from mcrobot.tools.registry import CallContext, Registry, Tool, ToolResult
 
 
@@ -186,6 +187,139 @@ class LessonTest(unittest.TestCase):
         with mock.patch("mcrobot.knowledge.remember") as mem:
             self._loop(verify=lambda s: (False, ""), max_rounds=1).run("砌墙")
         mem.assert_not_called()      # 什么都没说就别记空账
+
+
+class ReadOnlyVerifyTest(unittest.TestCase):
+    """核对轮只读（2026-10-17 补墙事故的硬约束）：验收子目标不许改世界。
+
+    事故原型：验收步「block_probe核对该格确认」失败后，模型下一轮发起
+    run_batch 把 6 格好石头覆盖成圆石。现在这类调用必须在 registry 之前被拒。
+    """
+
+    def _spy_reg(self):
+        """任何工具被真正调用都留痕（用于证明改世界工具没被执行）。"""
+        reg, calls = Registry(), []
+
+        def fn(n):
+            return lambda a, c: (calls.append(n), ToolResult(True, n, "", text="ok"))[1]
+
+        for n in ("block_probe", "block_at", "run_batch", "run_command", "say"):
+            reg.register(Tool(n, f"工具 {n}", {"type": "object", "properties": {}},
+                              "safe", fn(n)))
+        return reg, calls
+
+    def test_is_verification_goal(self):
+        self.assertTrue(is_verification_goal("block_probe核对该格确认"))
+        self.assertTrue(is_verification_goal("检查墙上还有没有缺口"))
+        self.assertTrue(is_verification_goal("确认补丁在不在原位"))
+        # 保守方向：带动作词的一律不锁——「核对并补上」就该正常跑；
+        # 疑问式「放没放上」也含动作词，会漏锁，但锁错的代价（挡合法修复）
+        # 比漏锁大，认不出来就不锁。
+        self.assertFalse(is_verification_goal("找到缺的那格用圆石补上"))
+        self.assertFalse(is_verification_goal("核对并补上没砌到的地方"))
+        self.assertFalse(is_verification_goal("看看补丁到底放没放上"))
+        self.assertFalse(is_verification_goal("砌一面墙"))                  # 无核对词
+        self.assertFalse(is_verification_goal(""))
+
+    def test_read_only_round_refuses_world_tools(self):
+        reg, calls = self._spy_reg()
+        loop = AgentLoop(registry=reg, tools_for_observation=(),
+                         decide=lambda s: [{"name": "block_probe", "arguments": {}},
+                                           {"name": "run_batch", "arguments": {}}],
+                         verify=lambda s: (False, "还没核对"), max_rounds=2,
+                         lessons_enabled=False, curriculum_enabled=False)
+        s = loop.run("核对该格确认", read_only=True, task_id="t")
+        self.assertNotIn("run_batch", calls)          # registry 从没被叫过它
+        refused = [r for r in s.receipts if r.tool == "run_batch"]
+        self.assertEqual(len(refused), 2)             # 两轮各拒一次
+        self.assertFalse(refused[0].ok)
+        self.assertIn("核对轮只读", refused[0].error)
+        self.assertNotIn("run_batch", [a["name"] for a in s.actions])  # 不配学技能
+        self.assertEqual(s.tool_calls, 2)             # 被拒的不烧预算
+        self.assertEqual(s.verdict, "fail")
+
+    def test_read_only_allows_reads_and_say(self):
+        reg, calls = self._spy_reg()
+        loop = AgentLoop(registry=reg, tools_for_observation=(),
+                         decide=lambda s: [{"name": "block_probe", "arguments": {}},
+                                           {"name": "say", "arguments": {}}],
+                         verify=lambda s: (True, ""))
+        s = loop.run("核对该格确认", read_only=True)
+        self.assertEqual(calls, ["block_probe", "say"])
+        self.assertEqual(s.verdict, "ok")
+
+    def test_not_read_only_still_executes_world_tools(self):
+        reg, calls = self._spy_reg()
+        loop = AgentLoop(registry=reg, tools_for_observation=(),
+                         decide=lambda s: [{"name": "run_batch", "arguments": {}}],
+                         verify=lambda s: (True, ""))
+        loop.run("把缺的那格补上", actor="oahnuy198",
+                 dangerous_allowed=("oahnuy198",))
+        self.assertEqual(calls, ["run_batch"])        # 非核对目标照常改世界
+
+    def test_plan_marks_verification_subtask_read_only(self):
+        seen: dict[str, bool] = {}
+
+        def decide(s):
+            seen[s.goal] = s.read_only
+            return [{"name": "say", "arguments": {}}]
+
+        loop = AgentLoop(registry=_reg("say"), tools_for_observation=(),
+                         decide=decide, verify=lambda s: (True, ""),
+                         plan_fn=lambda g: ["找到缺的那格用圆石补上",
+                                            "block_probe核对该格确认"],
+                         lessons_enabled=False, curriculum_enabled=False)
+        s = loop.run_plan("补墙")
+        self.assertEqual(seen, {"找到缺的那格用圆石补上": False,
+                                "block_probe核对该格确认": True})
+        self.assertEqual(s.verdict, "ok")
+
+    def test_incident_replay_verify_escalation_is_blocked(self):
+        """事故重放：2026-10-17 补墙任务第三步的原样行为，必须被挡住。
+
+        原事故：核对轮里模型被误导性计数带偏，写出「还需对 6 格补放
+        cobblestone」的批评，下一轮 run_batch 把 6 格好石头覆盖成圆石。
+        现在：子目标是纯核对 → 只读 → run_batch 在 registry 之前被拒，
+        世界一块砖都没被碰，计划如实失败停下。
+        """
+        reg, placed = Registry(), []
+        reg.register(Tool("block_probe", "探点", {"type": "object", "properties": {}},
+                          "safe", lambda a, c: ToolResult(
+                              False, "block_probe", "",
+                              text="1/15 个点是 cobblestone")))
+        reg.register(Tool("run_batch", "批量指令", {"type": "object", "properties": {}},
+                          "safe", lambda a, c: (placed.append(a),
+                                                ToolResult(True, "run_batch", "",
+                                                           text="done"))[1]))
+
+        def decide(s):
+            if s.round >= 2:      # 被批评带偏，想去「修」那 6 格
+                return [{"name": "run_batch",
+                         "arguments": {"commands": ["/setblock 50 48 -191 cobblestone"]}}]
+            return [{"name": "block_probe",
+                     "arguments": {"points": ["50-54 y48 z-191"], "block": "cobblestone"}}]
+
+        def verify(s):
+            if any(r.tool == "run_batch" and not r.ok for r in s.receipts):
+                return False, "想改世界但被只读拒收，如实报失败"
+            return False, ("15 个点只 1 个是 cobblestone；还需对 50-54 y48 z-191 "
+                           "等 6 格补放 cobblestone 后重新 probe")
+
+        loop = AgentLoop(registry=reg, tools_for_observation=(),
+                         decide=decide, verify=verify, max_rounds=3,
+                         lessons_enabled=False, curriculum_enabled=False)
+        s = loop.run("block_probe核对该格确认", read_only=True, task_id="t3")
+        self.assertEqual(placed, [])                 # 一块石头都没被碰
+        self.assertEqual(s.verdict, "fail")
+        self.assertTrue(any(r.tool == "run_batch" and "核对轮只读" in r.error
+                            for r in s.receipts))
+
+    def test_read_only_survives_serialization(self):
+        s = AgentState(goal="核对", read_only=True)
+        self.assertTrue(AgentState.from_dict(s.to_dict()).read_only)
+        d = s.to_dict()
+        d["read_only"] = False
+        self.assertFalse(AgentState.from_dict(d).read_only)
 
 
 if __name__ == "__main__":

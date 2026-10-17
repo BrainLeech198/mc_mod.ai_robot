@@ -37,6 +37,10 @@ DECIDE_SYSTEM = """你是 Minecraft 里一个真玩家 AI 的行动决策器。
   pass/unclear 都不用管；一次任务最多 1~2 次。别为了拍张好图去移动、等待或换角度。
 - 观察里的 skills 是**已经做成过**的技能模板：有能对上的就用 skill_run 跑它（参数填全），
   别从头现搓；没有就按工具一步步做，做成了可以 skill_save 存下来。
+- 批评说「还有 N 格不是 X」时先对照目标：目标只要求其中某几格是 X，其他格不是 X 是正常的，
+  别去动它们；拿不准就先只读核对，别改世界。
+- 任务是「核对/确认/检查」类子目标时**只读**：只调读取类和 say，发现不对就如实说没核对过，
+  不许顺手改世界——改世界是下一个子目标（或人）的事，系统也会拒收。
 - 不要输出 JSON 之外的任何文字。
 """
 
@@ -55,6 +59,11 @@ VERIFY_SYSTEM = """你是 Minecraft 里一个真玩家 AI 的自检裁判。
 - 改过世界的任务，回执里必须有 block_at / scan_region 之类的**世界读取**，且看到的结果符合目标；
   只有「命令返回 ok」不算做成了。
 - review（视觉评分表）只是外观参考，**不是世界证据**：它说 pass 不能当做成，说 fix 也不能当失败。
+- **「不是 X」不等于缺陷**：先对照目标判断——目标只要求某一格/某几格是 X，其他格本来就不是 X，
+  那是正常的，不是没做到。尤其目标方块（如圆石）是你为了补窟窿刚引入的补丁，别把它当成
+  周围一整片的验收标准，更不许在批评里写「还需把 N 格也改成 X」这种扩大化的话。
+- 回执里的坐标对不上、点数对不上、读数反常时，先怀疑回执本身（坐标写错、范围搞错、
+  探点被拒），别急着判定「东西被改了/少了」。
 - 有失败回执（未授权、报错）一律 ok:false。
 - critique 要具体到能指导下一步，别写空话。
 """
@@ -171,6 +180,9 @@ def render_state(s, specs: list[dict]) -> str:
         parts.append("\n# 工具回执\n" + json.dumps(rs, ensure_ascii=False))
     if s.critique:
         parts.append(f"\n# 上一轮批评\n{s.critique}")
+    if getattr(s, "read_only", False):
+        parts.append("\n# 本轮约束\n只读轮：这是核对/确认类子目标，只能调用读取类和 say 工具，"
+                     "改世界工具会被系统拒收。真发现问题就如实报「没核对过」，不许顺手改。")
     if s.round > 1:
         parts.append(f"\n# 轮次\n第 {s.round} 轮（上限 {s.max_rounds}）")
     parts.append("\n# 可用工具\n" + json.dumps(specs, ensure_ascii=False))
