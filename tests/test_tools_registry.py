@@ -213,5 +213,63 @@ class ResultTest(unittest.TestCase):
         self.assertTrue(d["ok"])
 
 
+class BlockProbeValidationTest(unittest.TestCase):
+    """block_probe 坐标校验（2026-10-17 补墙事故的修复）。
+
+    模型曾喂进「50-54 y48 z-191」这种区间/带字母的畸形坐标，
+    /execute if block 静默报错 → 回执变成「命中数偏低」→ 模型信以为真
+    去「修」本来没坏的地方。畸形坐标必须在敲命令之前被拒。
+    """
+
+    def _call(self, pts, block="cobblestone"):
+        with mock.patch.object(builtin.cc, "cmd") as m_cmd:
+            r = builtin.REGISTRY.call("block_probe",
+                                      {"points": pts, "block": block},
+                                      CallContext())
+        return r, m_cmd
+
+    def test_valid_point_unit(self):
+        self.assertTrue(builtin._valid_point("52 49 -191"))
+        self.assertTrue(builtin._valid_point("~ ~1 ~"))       # 相对坐标
+        self.assertTrue(builtin._valid_point("-35.5 -56 -78"))
+        # 逗号写法由 _t_block_probe 先归一化成空格再进这里，所以这里按未归一试
+        self.assertFalse(builtin._valid_point("52,49,-191"))
+        self.assertFalse(builtin._valid_point("50-54 y48 z-191"))
+        self.assertFalse(builtin._valid_point("50 y49 z-191"))
+        self.assertFalse(builtin._valid_point("52 49"))       # 少一个数
+        self.assertFalse(builtin._valid_point("52 49 -191 7"))  # 多一个数
+        self.assertFalse(builtin._valid_point("abc 49 -191"))
+
+    def test_range_coords_rejected_before_any_command(self):
+        r, m_cmd = self._call(["50-54 y48 z-191"])
+        self.assertFalse(r.ok)
+        self.assertIn("坐标格式不对", r.error)
+        self.assertIn("50-54", r.error)
+        m_cmd.assert_not_called()
+
+    def test_letter_coords_rejected(self):
+        r, m_cmd = self._call(["50 y49 z-191"])
+        self.assertFalse(r.ok)
+        self.assertIn("坐标格式不对", r.error)
+        m_cmd.assert_not_called()
+
+    def test_mixed_batch_rejected_wholesale(self):
+        r, m_cmd = self._call(["52 49 -191", "50-54 y48 z-191"])
+        self.assertFalse(r.ok)
+        self.assertIn("坐标格式不对", r.error)
+        m_cmd.assert_not_called()  # 一个坏点都不敲，别制造误导性计数
+
+    def test_good_coords_flow_to_probe(self):
+        with mock.patch.object(builtin, "_probe_points",
+                               return_value={"total": 1, "hit": 1,
+                                             "matched": ["52 49 -191"],
+                                             "missed": [],
+                                             "chat_seen": []}) as m_probe:
+            r, _ = self._call(["52,49,-191"])
+        self.assertTrue(r.ok)
+        m_probe.assert_called_once()
+        self.assertEqual(m_probe.call_args[0][0], ["52 49 -191"])  # 逗号已归一化
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

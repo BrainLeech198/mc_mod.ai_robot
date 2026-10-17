@@ -6,6 +6,7 @@ mcagent 的教训（绝不默认放行管理类指令）。
 from __future__ import annotations
 
 import json
+import re
 
 from ..body import bridge as cc
 from ..body import reflex
@@ -52,6 +53,21 @@ def _probe_points(points: list[str], block: str, timeout: float = 2.5) -> dict:
             "chat_seen": seen[:6]}
 
 
+_POINT_COMP = re.compile(r"^(?:[~^]-?(?:\d+(?:\.\d+)?|\.\d+)?|-?(?:\d+(?:\.\d+)?|\.\d+))$")
+
+
+def _valid_point(p: str) -> bool:
+    """一个合法探点 = 三个数（x y z），支持 ~/^ 相对坐标。
+
+    存在的理由：模型会写出「50-54 y48 z-191」这种区间/带字母的畸形坐标，
+    /execute if block 收下就报错、没有 token 回聊天，探点结果变成
+    「命中数偏低」——模型会信以为真去「修」本来没坏的地方（2026-10-17
+    补墙任务就是这么把 6 格好石头覆盖成圆石的）。所以在敲命令前先拒。
+    """
+    parts = str(p).split()
+    return len(parts) == 3 and all(_POINT_COMP.match(x) for x in parts)
+
+
 def _t_block_probe(args: dict, ctx: CallContext) -> ToolResult:
     pts = args.get("points") or []
     if isinstance(pts, str):
@@ -64,6 +80,13 @@ def _t_block_probe(args: dict, ctx: CallContext) -> ToolResult:
         return ToolResult(False, "block_probe", "", error="block 不能为空，如 stone / minecraft:oak_planks")
     if len(pts) > 24:
         return ToolResult(False, "block_probe", "", error="一次最多探 24 个点（省往返、防刷屏）")
+    bad = [p for p in pts if not _valid_point(p)]
+    if bad:
+        listed = "; ".join(f"'{p}'" for p in bad[:3])
+        return ToolResult(False, "block_probe", "",
+                          error=f"坐标格式不对（{listed}）：每个点必须是 x y z 三个数，"
+                                "如 \"52 49 -191\"；区间写法（50-54）和带字母的坐标"
+                                "（y48）一律拒收，要逐格列出")
     out = _probe_points(pts, block)
     ok = out["hit"] == out["total"]
     text = f"{out['hit']}/{out['total']} 个点是 {block}"
@@ -507,7 +530,9 @@ def build_registry() -> Registry:
         "block_probe",
         "探测指定坐标现在是什么方块（只读，靠 /execute if block，需要机器人是 OP）。"
         "砌完东西要自检就用它：points 填坐标列表，block 填期望方块 ID，"
-        "返回「命中数/总数」，命中不满就是没砌对。",
+        "返回「命中数/总数」，命中不满就是没砌对。"
+        "points 里每个点必须是 x y z 三个数（如 \"52 49 -191\" 或 \"52,49,-191\"），"
+        "要逐格列出；区间写法（\"50-54 49 -191\"）和带字母的坐标（\"y48\"）会被拒收。",
         {"type": "object",
          "properties": {
              "points": {"type": "array", "items": {"type": "string"},
