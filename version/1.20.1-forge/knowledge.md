@@ -23,6 +23,9 @@
 - 改世界/权限类指令只有服主 oahnuy198 能授权，白名单在 robot.json:auth.dangerous_allowed —— 机器人手册 §8.3 · 2026-10-17
 - WorldEdit 需要 OP；选区用 //pos1 x,y,z 和 //pos2 x,y,z，//size 看体积 —— 机器人手册 §6 · 2026-10-17
 
+### 排障
+- 手动起 DeepSink 必须先灌 instance/robot/secrets.env，否则缺 DEEPSINK_UPSTREAM_KEY → 上游 401 → 网关 500 → 大脑一路 http_retry —— 真机踩坑（2026-10-17 14:31）
+
 ### 方块
 - CFM 确认存在：desk、table、chair、cabinet、crate、ceiling_light、lamp、rubbish_bin、sink、toilet、basin、lattice_fence —— 方块目录.md · 2026-10-17
 - CFM 家具没有窗帘、黑板、数字时钟、书柜；垃圾桶真名是 rubbish_bin（不是 trash_can） —— 方块目录.md（2026-10-16 核实）
@@ -41,6 +44,7 @@
 - look 已接通：MiMo mimo-v2.6-flash 真吃图（响应 image_tokens>0），854×480 实测 6~19 秒 —— 真机回执（2026-10-17）
 - 推理型视觉模型 max_tokens 太小时只吐 reasoning_content、content 为空；默认给 600 —— 真机回执（2026-10-17）
 - DeepSink 会把 messages.content 拍平成文本（deepsink_server.py:_text_of），图片过不去，视觉 endpoint 必须直连上游 —— mock_api/deepsink_server.py:210 · 2026-10-17
+- look 已进闭环：大脑自己排 look→say，2 轮 2 调用 45 秒，描述与截图逐项对得上（2026-10-17 14:33 真机） —— 真机闭环回执 · 2026-10-17
 
 ### 验收
 - 改世界的目标必须有 block_at/scan_region 回执才算成功；区块没加载返回 loaded=false，不能当空气 —— 机器人手册 §9.2 · 2026-10-17
