@@ -177,6 +177,30 @@ def _t_look(args: dict, ctx: CallContext) -> ToolResult:
               f"{out['ms']}ms · 图 {shot['path']}）"))
 
 
+def _t_review(args: dict, ctx: CallContext) -> ToolResult:
+    """砌完自检：按固定五项评分表看外观，只产整改意见，不判成败。"""
+    from .. import vision
+    try:
+        default_w = vision.cfg(ctx.version)["max_width"]
+        max_width = int(args.get("max_width") or default_w)
+    except (TypeError, ValueError):
+        return ToolResult(False, "review", "", error="max_width 要给整数")
+    try:
+        shot = cc.screenshot(max_width=max_width)
+    except cc.ControlError as e:
+        return ToolResult(False, "review", "", error=str(e))
+    try:
+        out = vision.review(shot["abs_path"], version=ctx.version)
+    except vision.VisionError as e:
+        return ToolResult(False, "review", "", error=f"{e}（图已存：{shot['path']}）")
+    return ToolResult(
+        True, "review", "",
+        data={"verdict": out["verdict"], "issues": out["issues"],
+              "not_evidence": True, "ms": out["ms"], "model": out["model"], **shot},
+        text=vision._fmt_review(out) + f"（{shot['width']}×{shot['height']} · "
+                                       f"{out['ms']}ms · 图 {shot['path']}）")
+
+
 def _t_get_state(_args: dict, ctx: CallContext) -> ToolResult:
     st = cc.state()
     p = st.get("player") or {}
@@ -512,6 +536,17 @@ def build_registry() -> Registry:
          "properties": {"max_width": {"type": "integer", "default": 854,
                                       "description": "输出图片最大宽度，等比缩放"}},
          "required": []}, SAFE, _t_screenshot))
+
+    reg.register(Tool(
+        "review",
+        "砌完后按固定五项评分表自检外观（轮廓完整/边缘整齐/配色协调/有层次/照片有效）。"
+        "**只产整改意见，不判成败**：成败仍由 block_at/scan_region 的世界回执定。"
+        "它说不出准确坐标和方块名，意见只当「下一步该看哪」的线索。"
+        "一次任务最多 1~2 次（每次 10~20 秒）；别为了拍张好图去移动或等待。",
+        {"type": "object",
+         "properties": {"max_width": {"type": "integer", "default": 854,
+                                      "description": "输出图片最大宽度，等比缩放"}},
+         "required": []}, SAFE, _t_review))
 
     reg.register(Tool(
         "look",

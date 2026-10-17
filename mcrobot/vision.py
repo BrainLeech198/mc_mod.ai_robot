@@ -167,6 +167,115 @@ def check(version: str | None = None) -> dict:
     return out
 
 
+# ------------------------------ 验收（砌完自检） ------------------------------
+# 分工：成败由 block_at/scan_region 定（世界证据），这里只回答「好不好看」——
+# 轮廓齐不齐、墙线直不直、配色搭不搭、是不是呆方盒。所以结论只有三种：
+#   pass    五项都过，没意见
+#   fix     有具体整改意见（issues 里 1~2 条，suggest 必须能用工具做到）
+#   unclear 照片无效/输出没法解析——**不产意见，也不判成败**
+# 视觉会说错方块名、给不出准确坐标，所以它的意见只能当「下一步该看哪」的线索，
+# 永远不能当世界证据，也不能把 ok 洗成 fail 或把 fail 洗成 ok。
+
+RUBRIC: tuple[tuple[int, str, str], ...] = (
+    (1, "轮廓完整", "外轮廓没有缺口、破洞、悬空"),
+    (2, "边缘整齐", "墙线基本平直，没有明显凸出歪斜"),
+    (3, "配色协调", "主色不超过 3 种，没有突兀色块"),
+    (4, "有层次", "有立柱/出檐/门窗等细节，不是纯长方体（0-2 分）"),
+    (5, "照片有效", "能看清主体，不是全黑、被界面或天气糊住"),
+)
+
+REVIEW_SYSTEM = """你是 Minecraft 建筑验收员。给你一张建造完成后的截图，按下面五项评分表逐项打分。
+只依据图片本身判断：不许猜坐标、方块 ID、数量——你说不出具体是什么砖。
+
+评分表：
+1 轮廓完整：外轮廓没有缺口、破洞、悬空（是/否）
+2 边缘整齐：墙线基本平直，没有明显凸出歪斜（是/否）
+3 配色协调：主色不超过 3 种，没有突兀色块（是/否）
+4 有层次：有立柱/出檐/门窗等细节，不是纯长方体（0-2 分）
+5 照片有效：能看清主体，不是全黑、被界面或天气糊住（是/否）
+
+输出**只能**是一行 JSON：
+{"valid": true, "items": {"1": {"ok": true, "note": ""}, "4": {"score": 1, "note": "就一长方体"}},
+ "verdict": "pass|fix|unclear", "issues": [{"item": 2, "what": "差在哪", "suggest": "能用工具做到的动作"}]}
+
+规则：
+- 第 5 项为 false 时，verdict 必须是 unclear，issues 必须为空，并在第 5 项的 note 里说明照片为什么无效。
+- **第 1~4 项，note 必须写出你据以判断的画面里看得见的具体部位**（如「正面第二根白柱」「屋顶出檐」「南墙中央的门洞」）；
+  写不出具体部位的，该项一律判 false（第 4 项 score=0）——没看见就等于没有。
+- 只有第 1~4 项里有 false 或 score<2 时，verdict 才是 fix；否则 pass。
+- issues 最多 2 条；what 说清差在哪，suggest 必须具体到能用工具做（不许写「再修修」「改进一下」）。
+- 不许输出 JSON 之外的任何文字。"""
+
+
+def _parse_review(raw: str) -> dict:
+    """把模型的评分输出归一成 {verdict, items, issues, note}。解析失败一律 unclear。"""
+    from .brain.llm_policy import _extract_json_object
+    obj = _extract_json_object(raw or "")
+    names = {n: t for n, t, _ in RUBRIC}
+    items = [{"item": n, "name": t, "ok": None, "score": None, "note": ""}
+             for n, t, _ in RUBRIC]
+    by_n = {i["item"]: i for i in items}
+    verdict, issues, note = "unclear", [], ""
+    if obj:
+        valid = obj.get("valid")
+        got = obj.get("items")
+        if isinstance(got, dict):
+            for k, v in got.items():
+                try:
+                    n = int(k)
+                except (TypeError, ValueError):
+                    continue
+                if n not in by_n or not isinstance(v, dict):
+                    continue
+                it = by_n[n]
+                it["note"] = str(v.get("note") or "")[:120]
+                if n == 5:
+                    it["ok"] = bool(v.get("ok", valid if valid is not None else True))
+                    if not it["ok"]:
+                        note = it["note"] or "照片看不清主体"
+                elif "score" in v:
+                    try:
+                        it["score"] = max(0, min(2, int(v["score"])))
+                    except (TypeError, ValueError):
+                        it["score"] = None
+                else:
+                    it["ok"] = bool(v.get("ok"))
+        raw_issues = obj.get("issues")
+        if isinstance(raw_issues, list):
+            for it in raw_issues[:2]:
+                if isinstance(it, dict) and it.get("what"):
+                    issues.append({"item": it.get("item"), "what": str(it["what"])[:120],
+                                   "suggest": str(it.get("suggest") or "")[:160]})
+        verdict = obj.get("verdict") if obj.get("verdict") in ("pass", "fix", "unclear") else "unclear"
+    # 归一：结论必须和证据对得上，对不上就降级成「看不清」，绝不让它判成败
+    if by_n[5]["ok"] is False:
+        verdict, issues = "unclear", []
+    elif verdict == "fix" and not issues:
+        verdict = "unclear"          # 说要改又不说改哪，等于没说
+    elif verdict == "pass" and any(
+            i["ok"] is False or (i["score"] is not None and i["score"] < 2)
+            for i in items[:4]):
+        verdict = "unclear"          # 自相矛盾：说全过却有 false/低分项
+    if not obj:
+        note = "评分表输出无法解析，只当没看见"
+    return {"verdict": verdict, "items": items, "issues": issues, "note": note}
+
+
+def review(image_path: str, *, version: str | None = None) -> dict:
+    """按五项评分表自检外观。返回 {verdict, items, issues, note, model, ms, path, bytes}。"""
+    from pathlib import Path
+    p = Path(image_path)
+    if not p.exists():
+        raise VisionError(f"图片不存在：{image_path}")
+    if p.stat().st_size > MAX_IMAGE_BYTES:
+        raise VisionError(f"图片太大（{p.stat().st_size // 1024} KB），先缩到 854 宽再问")
+    out = describe_bytes(p.read_bytes(), REVIEW_SYSTEM, version=version)
+    res = _parse_review(out["text"])
+    res.update({"model": out["model"], "ms": out["ms"], "bytes": out["bytes"],
+                "path": str(p)})
+    return res
+
+
 # -------------------------------- CLI --------------------------------
 
 
@@ -180,6 +289,8 @@ def main(argv=None) -> int:
     de = sub.add_parser("describe", help="问已有图片")
     de.add_argument("--file", required=True)
     de.add_argument("question", nargs="?", default="")
+    rv = sub.add_parser("review", help="按五项评分表验收（现截）")
+    rv.add_argument("--max-width", type=int, default=0)
     args = ap.parse_args(argv)
 
     if args.action == "check":
@@ -213,7 +324,34 @@ def main(argv=None) -> int:
             return 1
         print(f"{out['text']}\n（{out['ms']}ms · {out['path']}）")
         return 0
+
+    if args.action == "review":
+        from .body import bridge as cc
+        width = args.max_width or cfg()["max_width"]
+        shot = cc.screenshot(max_width=width)
+        try:
+            out = review(shot["abs_path"])
+        except VisionError as e:
+            print(f"验收失败：{e}（图在 {shot['path']}）")
+            return 1
+        print(_fmt_review(out) + f"（{shot['width']}×{shot['height']} · {out['ms']}ms）")
+        return 0
     return 1
+
+
+def _fmt_review(r: dict) -> str:
+    """把验收结果压成一行给人/模型看的文字。"""
+    if r["verdict"] == "unclear":
+        return f"验收 unclear：{r['note'] or '没法判断'}（不产意见）"
+    if r["verdict"] == "pass":
+        return "验收 pass：五项都过，没有要改的"
+    bits = [f"{i['item']} {i['name']}——{i['note'] or '有问题'}" for i in r["items"][:4]
+            if i["ok"] is False or (i["score"] is not None and i["score"] < 2)]
+    if not bits:
+        bits = [i["what"] for i in r["issues"]] or ["有问题"]
+    head = "验收 fix：" + "；".join(bits)
+    tips = [i["suggest"] for i in r["issues"] if i.get("suggest")]
+    return head + ("｜建议 " + "；".join(tips) if tips else "")
 
 
 if __name__ == "__main__":

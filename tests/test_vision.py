@@ -24,6 +24,7 @@ class _Stub(BaseHTTPRequestHandler):
     raw = None          # 非空则原样当响应体（测推理模型只给 reasoning 的情况）
     payloads: list[dict] = []
     auth: list[str] = []
+    last_text: list[str] = []   # 记下问句，方便断言评分提示词发过去了
 
     def log_message(self, *a):
         pass
@@ -32,6 +33,9 @@ class _Stub(BaseHTTPRequestHandler):
         body = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
         _Stub.payloads.append(body)
         _Stub.auth.append(self.headers.get("Authorization") or "")
+        parts = body["messages"][0]["content"]
+        if isinstance(parts, list):
+            _Stub.last_text.append(parts[0]["text"])
         if _Stub.status != 200:
             data = b'{"error":{"message":"image input is not supported"}}'
             self.send_response(_Stub.status)
@@ -66,6 +70,7 @@ class VisionHttpTest(unittest.TestCase):
         _Stub.raw = None
         _Stub.payloads = []
         _Stub.auth = []
+        _Stub.last_text = []
         self.srv = ThreadingHTTPServer(("127.0.0.1", 0), _Stub)
         self.port = self.srv.server_address[1]
         threading.Thread(target=self.srv.serve_forever, daemon=True).start()
@@ -134,6 +139,7 @@ class ConfigTest(unittest.TestCase):
         _Stub.raw = None
         _Stub.reply = "收到"
         _Stub.payloads = []
+        _Stub.raw = None
         srv = ThreadingHTTPServer(("127.0.0.1", 0), _Stub)
         threading.Thread(target=srv.serve_forever, daemon=True).start()
         self.addCleanup(srv.shutdown)
@@ -185,7 +191,8 @@ class LookToolTest(unittest.TestCase):
 
     def test_tool_registered(self):
         self.assertIn("look", self.reg.names())
-        self.assertEqual(len(self.reg.names()), 27)
+        self.assertIn("review", self.reg.names())
+        self.assertEqual(len(self.reg.names()), 28)
 
     def test_look_returns_description(self):
         with mock.patch.object(cc, "screenshot", lambda max_width=854: self.shot), \
@@ -214,6 +221,118 @@ class LookToolTest(unittest.TestCase):
             raise cc.ControlError("客户端没连上")
         with mock.patch.object(cc, "screenshot", boom):
             r = self.reg.call("look", {}, CallContext(actor="tester"))
+        self.assertFalse(r.ok)
+        self.assertIn("没连上", r.error)
+
+
+_FIX_JSON = json.dumps({"valid": True,
+                        "items": {"1": {"ok": True}, "2": {"ok": False, "note": "右墙外鼓一格"},
+                                  "3": {"ok": True}, "4": {"score": 1, "note": "纯长方体"},
+                                  "5": {"ok": True}},
+                        "verdict": "fix",
+                        "issues": [{"item": 2, "what": "右侧墙线外鼓约一格",
+                                    "suggest": "scan_region 扫右墙一列核对后重砌"}]},
+                       ensure_ascii=False)
+
+
+class ReviewParseTest(unittest.TestCase):
+    """评分表解析与归一：结论必须和证据对得上，对不上就降级 unclear。"""
+
+    def test_fix_keeps_issues(self):
+        r = vision._parse_review(_FIX_JSON)
+        self.assertEqual(r["verdict"], "fix")
+        self.assertEqual(len(r["issues"]), 1)
+        self.assertEqual(r["issues"][0]["item"], 2)
+        self.assertFalse(r["items"][1]["ok"])
+        self.assertEqual(r["items"][3]["score"], 1)
+
+    def test_invalid_photo_forces_unclear_and_drops_issues(self):
+        raw = json.dumps({"valid": False,
+                          "items": {"5": {"ok": False, "note": "全黑"}},
+                          "verdict": "fix",
+                          "issues": [{"item": 1, "what": "有洞", "suggest": "补上"}]},
+                         ensure_ascii=False)
+        r = vision._parse_review(raw)
+        self.assertEqual(r["verdict"], "unclear")
+        self.assertEqual(r["issues"], [])
+        self.assertIn("全黑", r["note"])
+
+    def test_fix_without_issues_downgrades(self):
+        raw = json.dumps({"valid": True, "items": {"2": {"ok": False}},
+                          "verdict": "fix", "issues": []}, ensure_ascii=False)
+        self.assertEqual(vision._parse_review(raw)["verdict"], "unclear")
+
+    def test_pass_contradicted_by_items_downgrades(self):
+        raw = json.dumps({"valid": True, "items": {"2": {"ok": False}},
+                          "verdict": "pass", "issues": []}, ensure_ascii=False)
+        self.assertEqual(vision._parse_review(raw)["verdict"], "unclear")
+
+    def test_unparsable_is_unclear_not_verdict(self):
+        r = vision._parse_review("我觉得这房子挺好的，就是有点丑")
+        self.assertEqual(r["verdict"], "unclear")
+        self.assertEqual(r["issues"], [])
+        self.assertTrue(r["note"])
+
+    def test_all_ok_is_pass(self):
+        raw = json.dumps({"valid": True,
+                          "items": {"1": {"ok": True}, "2": {"ok": True},
+                                    "3": {"ok": True}, "4": {"score": 2},
+                                    "5": {"ok": True}},
+                          "verdict": "pass", "issues": []}, ensure_ascii=False)
+        r = vision._parse_review(raw)
+        self.assertEqual(r["verdict"], "pass")
+        self.assertEqual(vision._fmt_review(r), "验收 pass：五项都过，没有要改的")
+
+    def test_fmt_fix_mentions_item_and_suggest(self):
+        text = vision._fmt_review(vision._parse_review(_FIX_JSON))
+        self.assertIn("2 边缘整齐", text)
+        self.assertIn("scan_region", text)
+
+    def test_fmt_unclear_mentions_photo(self):
+        text = vision._fmt_review(vision._parse_review(
+            json.dumps({"valid": False, "items": {"5": {"ok": False, "note": "全黑"}},
+                        "verdict": "unclear"}, ensure_ascii=False)))
+        self.assertIn("全黑", text)
+        self.assertIn("不产意见", text)
+
+
+class ReviewToolTest(unittest.TestCase):
+    def setUp(self):
+        from mcrobot.tools.builtin import build_registry
+        self.reg = build_registry()
+        f = tempfile.NamedTemporaryFile(suffix=".png", delete=False)
+        f.write(vision.TINY_PNG)
+        f.close()
+        self.addCleanup(os.unlink, f.name)
+        self.shot = {"path": "instance/robot/shots/x.png", "abs_path": f.name,
+                     "width": 854, "height": 480, "bytes": 1234, "capture_ms": 60}
+        self.srv = ThreadingHTTPServer(("127.0.0.1", 0), _Stub)
+        self.port = self.srv.server_address[1]
+        threading.Thread(target=self.srv.serve_forever, daemon=True).start()
+        self.addCleanup(self.srv.shutdown)
+        self.cfg_patch = mock.patch.object(
+            vision, "cfg", lambda version=None: _cfg(f"http://127.0.0.1:{self.port}/v1"))
+        self.cfg_patch.start()
+        self.addCleanup(self.cfg_patch.stop)
+        key_patch = mock.patch.dict(os.environ, {"MCROBOT_VISION_KEY": "test-key"})
+        key_patch.start()
+        self.addCleanup(key_patch.stop)
+
+    def test_review_tool_returns_fix(self):
+        _Stub.reply = _FIX_JSON
+        with mock.patch.object(cc, "screenshot", lambda max_width=854: self.shot):
+            r = self.reg.call("review", {}, CallContext(actor="tester"))
+        self.assertTrue(r.ok, r.error)
+        self.assertEqual(r.data["verdict"], "fix")
+        self.assertTrue(r.data["not_evidence"])       # 明写「这不是世界证据」
+        self.assertIn("scan_region", r.text)
+        self.assertIn("五项评分表", _Stub.last_text[-1])   # 发的确实是评分提示词
+
+    def test_review_tool_shot_failure(self):
+        def boom(max_width=854):
+            raise cc.ControlError("客户端没连上")
+        with mock.patch.object(cc, "screenshot", boom):
+            r = self.reg.call("review", {}, CallContext(actor="tester"))
         self.assertFalse(r.ok)
         self.assertIn("没连上", r.error)
 
