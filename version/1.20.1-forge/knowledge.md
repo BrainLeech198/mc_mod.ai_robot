@@ -26,6 +26,10 @@
 ### 排障
 - 手动起 DeepSink 必须先灌 instance/robot/secrets.env，否则缺 DEEPSINK_UPSTREAM_KEY → 上游 401 → 网关 500 → 大脑一路 http_retry —— 真机踩坑（2026-10-17 14:31）
 
+### 教训
+- 盖个房子 没做成：一直不成 —— 闭环 无 task_id · 2026-10-17
+- 刷屏测试 没做成：行动预算用尽（3 次），停手 —— 闭环 无 task_id · 2026-10-17
+
 ### 方块
 - CFM 确认存在：desk、table、chair、cabinet、crate、ceiling_light、lamp、rubbish_bin、sink、toilet、basin、lattice_fence —— 方块目录.md · 2026-10-17
 - CFM 家具没有窗帘、黑板、数字时钟、书柜；垃圾桶真名是 rubbish_bin（不是 trash_can） —— 方块目录.md（2026-10-16 核实）
@@ -48,6 +52,9 @@
 - 五项评分表只问结构好不好看，不问完工没有——「门装了没」是功能项，归 scan_region 查（门洞坐标是 air 还是 door） —— 验收定义（手册 §9.7.1） · 2026-10-17
 - review 评分表实测：不加「必须引用看得见的具体部位」规则时模型对没装门窗的楼直接 pass 零理由；收紧后才逐项给依据 —— 真机复测（2026-10-17 15:30）
 - review 一次 6~75 秒（方差大，冷启动 74.5s），一次任务最多调 1 次 —— 真机计时 · 2026-10-17
+
+### 闭环
+- 失败自动沉淀教训：闭环 verdict≠ok 时把目标+批评写成 topic=教训 的事实，出处是 task_id；做成的路只进技能库不重复记 —— 手册 §9.6（2026-10-17 实装）
 
 ### 验收
 - 改世界的目标必须有 block_at/scan_region 回执才算成功；区块没加载返回 loaded=false，不能当空气 —— 机器人手册 §9.2 · 2026-10-17

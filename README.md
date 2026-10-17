@@ -26,7 +26,7 @@ mcrobot/           代码（分层）
   textmatch.py     中英混合检索打分（技能库/知识库共用）
   ops/             运维：supervisor · launch_client · sftp · cleanup · reply
   console/         本地网页控制台（:8901）
-tests/             单测（267 项）
+tests/             单测（271 项）
 controlmod/        Forge 客户端 mod 源码
 instance/          游戏运行时目录（不入库）
 ```

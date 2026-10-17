@@ -116,7 +116,8 @@ class AgentLoop:
                  max_rounds: int = 4,
                  action_budget: int = 20,
                  tools_for_observation: tuple[str, ...] = ("get_state",),
-                 skills_enabled: bool = True):
+                 skills_enabled: bool = True,
+                 lessons_enabled: bool = True):
         self.registry = registry or build_registry()
         # 注意：不能叫 self.decide / self.verify —— 会盖掉同名节点方法
         self.decide_fn = decide or _fallback_decide
@@ -126,6 +127,9 @@ class AgentLoop:
         self.tools_for_observation = tools_for_observation
         # Voyager 技能库：规划前检索、做成后入库。关掉就是纯闭环（便于单测隔离）
         self.skills_enabled = skills_enabled
+        # mcagent 的反思：失败沉淀成知识库里的「教训」，下次同类目标检索得到。
+        # 关掉给单测用——不然每次跑失败用例都往版本知识表里写垃圾。
+        self.lessons_enabled = lessons_enabled
 
     # ---------------- 节点 ----------------
 
@@ -228,7 +232,28 @@ class AgentLoop:
                 skl.learn_from_actions(s.goal, s.actions)
             except Exception:
                 pass
+        if self.lessons_enabled and s.verdict != "ok":
+            # mcagent 的反思：做成的路进技能库，做错的路进知识库当「教训」——
+            # 下次同类目标在 perceive 就能检索到，不用同一個坑踩两次。
+            self._remember_lesson(s)
         return s
+
+    def _remember_lesson(self, s: AgentState) -> None:
+        """把一次失败沉淀成知识库里的一条「教训」。
+
+        红线（和 remember 本身一致）：出处写死是这次闭环的 task_id，模型不能凭空造记忆；
+        任何异常都吞掉——记忆是锦上添花，不能反过来影响任务结论。
+        """
+        why = " ".join((s.critique or s.aborted or "").split())[:200]
+        if not why:
+            return
+        goal = " ".join(s.goal.split())[:60]
+        try:
+            from .. import knowledge as kno
+            kno.remember("教训", f"{goal} 没做成：{why}",
+                         tags=["闭环", "失败"], source=f"闭环 {s.task_id or '无 task_id'}")
+        except Exception:
+            pass
 
 
 # ---------------- 默认策略（无 LLM 时的兜底，保证链路永远能跑） ----------------

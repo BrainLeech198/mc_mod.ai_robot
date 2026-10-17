@@ -107,7 +107,8 @@ class LoopTest(unittest.TestCase):
                          decide=lambda s: [{"name": "say", "arguments": {}},
                                            {"name": "boom", "arguments": {}},
                                            {"name": "say", "arguments": {}}],
-                         verify=lambda s: (False, "有失败"), max_rounds=1)
+                         verify=lambda s: (False, "有失败"), max_rounds=1,
+                         lessons_enabled=False)
         s = loop.run("试试")
         self.assertEqual([r.tool for r in s.receipts], ["say", "boom"])
 
@@ -143,6 +144,48 @@ class FallbackTest(unittest.TestCase):
         loop = AgentLoop(registry=_reg("run_command"), tools_for_observation=())
         s = loop.run("/list")
         self.assertEqual(s.receipts[0].tool, "run_command")
+
+
+class LessonTest(unittest.TestCase):
+    """mcagent 的反思：失败要沉淀成知识库里的「教训」，下次才不用重踩。"""
+
+    def _loop(self, **kw):
+        return AgentLoop(registry=_reg("say"), tools_for_observation=(),
+                         decide=lambda s: [{"name": "say", "arguments": {}}], **kw)
+
+    def test_failure_writes_lesson_with_task_id_as_source(self):
+        from unittest import mock
+        with mock.patch("mcrobot.knowledge.remember") as mem:
+            s = self._loop(verify=lambda s: (False, "右墙少砌了两格"),
+                           max_rounds=1).run("砌墙", task_id="t-1")
+        self.assertEqual(s.verdict, "fail")
+        mem.assert_called_once()
+        topic, text = mem.call_args[0][0], mem.call_args[0][1]
+        self.assertEqual(topic, "教训")
+        self.assertIn("少砌了两格", text)
+        self.assertIn("t-1", mem.call_args[1]["source"])   # 出处 = 这次闭环，不是模型瞎编
+
+    def test_success_writes_no_lesson(self):
+        from unittest import mock
+        with mock.patch("mcrobot.knowledge.remember") as mem:
+            self._loop(verify=lambda s: (True, "")).run("砌墙", task_id="t-2")
+        mem.assert_not_called()      # 做成的路归技能库，不重复记
+
+    def test_lesson_failure_does_not_break_task(self):
+        from unittest import mock
+
+        def boom(*a, **kw):
+            raise OSError("磁盘满了")
+        with mock.patch("mcrobot.knowledge.remember", boom):
+            s = self._loop(verify=lambda s: (False, "差一点"), max_rounds=1).run("砌墙")
+        self.assertEqual(s.verdict, "fail")     # 记忆挂了不影响结论
+        self.assertIn("差一点", s.critique)
+
+    def test_no_critique_writes_nothing(self):
+        from unittest import mock
+        with mock.patch("mcrobot.knowledge.remember") as mem:
+            self._loop(verify=lambda s: (False, ""), max_rounds=1).run("砌墙")
+        mem.assert_not_called()      # 什么都没说就别记空账
 
 
 if __name__ == "__main__":
