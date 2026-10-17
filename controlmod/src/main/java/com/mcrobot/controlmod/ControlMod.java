@@ -5,6 +5,7 @@ import com.mcrobot.controlmod.control.ControlServer;
 import com.mcrobot.controlmod.control.ControlToken;
 import com.mcrobot.controlmod.control.GameBridge;
 import com.mcrobot.controlmod.control.MinecraftGameActions;
+import com.mcrobot.controlmod.control.MinecraftScreenCapture;
 import net.minecraft.client.Minecraft;
 import net.minecraftforge.api.distmarker.Dist;
 import net.minecraftforge.client.event.ClientChatReceivedEvent;
@@ -29,6 +30,7 @@ public class ControlMod {
     private static final int CONTROL_PORT = 17890;
 
     private final ChatLog chatLog = new ChatLog(200);
+    private final MinecraftScreenCapture screenCapture = new MinecraftScreenCapture();
     private AutoLogin autoLogin;
     private boolean configAttempted = false;
     private ControlServer controlServer;
@@ -38,6 +40,8 @@ public class ControlMod {
         IEventBus modEventBus = FMLJavaModLoadingContext.get().getModEventBus();
         modEventBus.addListener(this::onClientSetup);
         MinecraftForge.EVENT_BUS.register(this);
+        // 截图必须在渲染阶段（AFTER_LEVEL）抓帧，所以它自己订阅事件
+        MinecraftForge.EVENT_BUS.register(screenCapture);
     }
 
     private void onClientSetup(FMLClientSetupEvent event) {
@@ -45,7 +49,7 @@ public class ControlMod {
         try {
             String token = ControlToken.loadOrCreate(gameDir);
             GameBridge bridge = new GameBridge(new MinecraftGameActions(), Minecraft.getInstance()::execute, 5000);
-            controlServer = new ControlServer(CONTROL_PORT, token, bridge, chatLog);
+            controlServer = new ControlServer(CONTROL_PORT, token, bridge, chatLog, screenCapture);
             controlServer.start();
             LOGGER.info("ControlMod control channel on 127.0.0.1:{}", controlServer.port());
         } catch (IOException e) {

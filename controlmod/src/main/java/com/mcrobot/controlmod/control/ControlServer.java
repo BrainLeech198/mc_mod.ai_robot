@@ -21,6 +21,7 @@ import java.util.List;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 
 /** 只监听 127.0.0.1 的本地 HTTP 桥：token 鉴权 + JSON。 */
@@ -32,13 +33,19 @@ public class ControlServer {
     private final String token;
     private final GameBridge bridge;
     private final ChatLog chatLog;
+    private final ScreenCapture capture;
     private HttpServer server;
 
     public ControlServer(int port, String token, GameBridge bridge, ChatLog chatLog) {
+        this(port, token, bridge, chatLog, null);
+    }
+
+    public ControlServer(int port, String token, GameBridge bridge, ChatLog chatLog, ScreenCapture capture) {
         this.requestedPort = port;
         this.token = token;
         this.bridge = bridge;
         this.chatLog = chatLog;
+        this.capture = capture;
     }
 
     public void start() throws IOException {
@@ -80,6 +87,7 @@ public class ControlServer {
                 case "/screen/close" -> { requirePost(method); screenClose(ex); }
                 case "/blocks" -> { requireGet(method); blocks(ex); }
                 case "/looking" -> { requireGet(method); looking(ex); }
+                case "/screen.png" -> { requireGet(method); screenPng(ex); }
                 case "/chat" -> {
                     if (method.equals("GET")) chatSince(ex);
                     else if (method.equals("POST")) chatSend(ex);
@@ -260,6 +268,38 @@ public class ControlServer {
         send(ex, 200, o);
     }
 
+    private void screenPng(HttpExchange ex) throws IOException {
+        if (capture == null) throw new HttpError(501, "screenshot not available");
+        int max = Math.min(Math.max(queryIntOr(ex, "max", 854), 64), 3840);
+        long t0 = System.nanoTime();
+        CompletableFuture<WorldView.Shot> future;
+        try {
+            future = capture.request(max);
+        } catch (NotInGameException e) {
+            throw new HttpError(409, "not in game");
+        } catch (IllegalStateException e) {
+            throw new HttpError(503, "capture busy: another screenshot is in flight");
+        }
+        WorldView.Shot shot;
+        try {
+            // 比 ScreenCapture 内部的 4s 稍长，让内部超时先给出更准确的原因
+            shot = future.get(5, TimeUnit.SECONDS);
+        } catch (TimeoutException e) {
+            throw new HttpError(504, "capture timeout: window minimized or no frame rendered");
+        } catch (ExecutionException e) {
+            if (e.getCause() instanceof NotInGameException) throw new HttpError(409, "not in game");
+            throw new HttpError(503, "capture failed: " + e.getCause());
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new HttpError(503, "interrupted");
+        }
+        ex.getResponseHeaders().set("X-Image-Width", String.valueOf(shot.width()));
+        ex.getResponseHeaders().set("X-Image-Height", String.valueOf(shot.height()));
+        ex.getResponseHeaders().set("X-Capture-Ms", String.valueOf((System.nanoTime() - t0) / 1_000_000));
+        ex.getResponseHeaders().set("Cache-Control", "no-store");
+        sendBytes(ex, 200, "image/png", shot.png());
+    }
+
     private <T> T awaitBridge(CompletableFuture<T> future) {
         try {
             return bridge.await(future);
@@ -366,7 +406,12 @@ public class ControlServer {
 
     private static void send(HttpExchange ex, int code, JsonElement body) throws IOException {
         byte[] bytes = GSON.toJson(body).getBytes(StandardCharsets.UTF_8);
-        ex.getResponseHeaders().set("Content-Type", "application/json; charset=utf-8");
+        sendBytes(ex, code, "application/json; charset=utf-8", bytes);
+    }
+
+    private static void sendBytes(HttpExchange ex, int code, String contentType, byte[] bytes)
+            throws IOException {
+        ex.getResponseHeaders().set("Content-Type", contentType);
         ex.sendResponseHeaders(code, bytes.length);
         try (OutputStream out = ex.getResponseBody()) {
             out.write(bytes);

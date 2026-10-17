@@ -12,6 +12,9 @@ public final class WorldView {
     /** total 是请求区域的实际格数；blocks 最多 limit 个，truncated 表示被截断。 */
     public record Area(List<BlockAt> blocks, int total, boolean truncated) {}
 
+    /** png 是可直接写盘的 PNG 字节；宽高是缩放后的真实尺寸。 */
+    public record Shot(byte[] png, int width, int height) {}
+
     /** type: block / entity / none。 */
     public record Hit(String type, String id, int x, int y, int z, double distance) {
         public static Hit none() {

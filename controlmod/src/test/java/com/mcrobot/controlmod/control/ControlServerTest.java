@@ -12,6 +12,7 @@ import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.CompletableFuture;
 
 import static org.junit.jupiter.api.Assertions.*;
 
@@ -72,6 +73,12 @@ class ControlServerTest {
     private HttpResponse<String> get(String path) throws Exception {
         return send(HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + port + path))
                 .header("X-Control-Token", TOKEN).GET().build());
+    }
+
+    private HttpResponse<byte[]> getBytes(String path) throws Exception {
+        return http.send(HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + port + path))
+                .header("X-Control-Token", TOKEN).GET().build(),
+                HttpResponse.BodyHandlers.ofByteArray());
     }
 
     private HttpResponse<String> post(String path, String json) throws Exception {

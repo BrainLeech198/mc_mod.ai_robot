@@ -137,6 +137,22 @@ def _t_looking_at(_args: dict, ctx: CallContext) -> ToolResult:
                            f"({h.get('x')},{h.get('y')},{h.get('z')})，距离 {h.get('distance')}")
 
 
+def _t_screenshot(args: dict, ctx: CallContext) -> ToolResult:
+    try:
+        max_width = int(args.get("max_width") or 854)
+    except (TypeError, ValueError):
+        return ToolResult(False, "screenshot", "", error="max_width 要给整数")
+    try:
+        shot = cc.screenshot(max_width=max_width)
+    except cc.ControlError as e:
+        return ToolResult(False, "screenshot", "", error=str(e))
+    kb = max(1, round(shot["bytes"] / 1024))
+    return ToolResult(
+        True, "screenshot", "", data=shot,
+        text=(f"截图已保存：{shot['path']}（{shot['width']}×{shot['height']}，{kb} KB，"
+              f"抓帧 {shot['capture_ms']}ms）"))
+
+
 def _t_get_state(_args: dict, ctx: CallContext) -> ToolResult:
     st = cc.state()
     p = st.get("player") or {}
@@ -421,6 +437,16 @@ def build_registry() -> Registry:
         "looking_at",
         "读准星当前对准的方块或实体（含坐标和距离）。",
         {"type": "object", "properties": {}, "required": []}, SAFE, _t_looking_at))
+
+    reg.register(Tool(
+        "screenshot",
+        "截一张当前画面存成 PNG，返回文件路径与尺寸（客户端本地抓帧，不需要 OP，不含 HUD）。"
+        "用途是留档给玩家看，或给接了视觉的模型看。"
+        "注意：纯文字模型看不到图片内容，不要用它判断「砌得对不对」，那要用 scan_region/block_at。",
+        {"type": "object",
+         "properties": {"max_width": {"type": "integer", "default": 854,
+                                      "description": "输出图片最大宽度，等比缩放"}},
+         "required": []}, SAFE, _t_screenshot))
 
     reg.register(Tool(
         "say", "在游戏里说一句话（会经身体发出）。",

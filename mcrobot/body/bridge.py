@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """ControlMod 本地 HTTP 桥的最小客户端（stdlib，无依赖）。"""
 import argparse
+import datetime
 import json
 import sys
 import urllib.error
@@ -80,6 +81,53 @@ def blocks_in_box(x1, y1, z1, x2, y2, z2, limit=512):
 def looking_at():
     """准星指向的方块/实体。"""
     return _request("GET", "/looking")
+
+
+def _request_bytes(path):
+    """和 _request 一样，但返回原始字节（截图不能走 JSON）。"""
+    url = f"http://127.0.0.1:{http_port()}{path}"
+    req = urllib.request.Request(url, method="GET")
+    req.add_header("X-Control-Token", token())
+    try:
+        with urllib.request.urlopen(req, timeout=15) as r:
+            return r.read(), r.headers
+    except urllib.error.HTTPError as e:
+        payload = e.read().decode("utf-8", "replace")
+        try:
+            err = json.loads(payload).get("error", payload)
+        except Exception:
+            err = payload
+        raise ControlError(f"HTTP {e.code}: {err}") from None
+    except urllib.error.URLError as e:
+        raise ControlError(f"无法连接 ControlMod（客户端未运行或端口未开？）: {e.reason}") from None
+
+
+def screenshot(max_width=854, out_dir=None):
+    """截一张当前画面，存成 PNG，返回路径与尺寸。
+
+    截图在客户端渲染线程抓帧，不含 HUD（AFTER_LEVEL 阶段），不需要 OP。
+    max_width 会等比缩小，默认 854（给视觉模型省 token）。
+    """
+    data, headers = _request_bytes(f"/screen.png?max={int(max_width)}")
+    if out_dir is None:
+        out_dir = REPO / "instance" / "robot" / "shots"
+    out_dir = Path(out_dir)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    stamp = datetime.datetime.now().strftime("%Y%m%d-%H%M%S-%f")[:-3]
+    path = out_dir / f"shot-{stamp}.png"
+    path.write_bytes(data)
+    try:
+        shown = str(path.relative_to(REPO))
+    except ValueError:
+        shown = str(path)
+    return {
+        "path": shown,
+        "abs_path": str(path),
+        "width": int(headers.get("X-Image-Width") or 0),
+        "height": int(headers.get("X-Image-Height") or 0),
+        "bytes": len(data),
+        "capture_ms": int(headers.get("X-Capture-Ms") or 0),
+    }
 
 
 def close():

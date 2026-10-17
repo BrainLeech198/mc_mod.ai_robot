@@ -171,6 +171,30 @@ class BaritoneTest(unittest.TestCase):
         self.assertEqual([c.args[0] for c in m.call_args_list], ["#stop", "#follow oahnuy198"])
 
 
+class ScreenshotTest(unittest.TestCase):
+    """截图是原始字节（不是 JSON），工具层只负责落盘和把路径说清楚。"""
+
+    def setUp(self):
+        self.reg = builtin.build_registry()
+
+    def test_screenshot_returns_saved_path(self):
+        shot = {"path": "instance/robot/shots/x.png", "abs_path": "/tmp/x.png",
+                "width": 854, "height": 480, "bytes": 4096, "capture_ms": 12}
+        with mock.patch.object(builtin.cc, "screenshot", return_value=shot) as m:
+            r = self.reg.call("screenshot", {"max_width": 640}, CallContext())
+        self.assertTrue(r.ok, r.error)
+        m.assert_called_once_with(max_width=640)
+        self.assertIn("854×480", r.text)
+        self.assertEqual(r.data["path"], "instance/robot/shots/x.png")
+
+    def test_screenshot_error_becomes_receipt(self):
+        with mock.patch.object(builtin.cc, "screenshot",
+                               side_effect=builtin.cc.ControlError("HTTP 504: capture timeout")):
+            r = self.reg.call("screenshot", {}, CallContext())
+        self.assertFalse(r.ok)
+        self.assertIn("504", r.error)
+
+
 class ResultTest(unittest.TestCase):
     def test_exception_becomes_receipt(self):
         def boom(_a, _c):
