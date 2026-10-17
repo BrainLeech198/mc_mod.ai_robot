@@ -147,7 +147,19 @@ class AgentLoop:
                     skill_names = [h.name for h in hits]
             except Exception:
                 pass
-        s.log("perceive", tools=list(self.tools_for_observation), skills=skill_names)
+        # 知识库同理：只塞相关事实，查不到就不塞（红线 3）
+        knowledge = []
+        try:
+            from .. import knowledge as kno
+            knowledge = kno.search(s.goal, top_k=3)
+            if knowledge:
+                s.observation["knowledge"] = [
+                    {"topic": f["topic"], "text": f["text"],
+                     "source": f.get("source") or ""} for f in knowledge]
+        except Exception:
+            pass
+        s.log("perceive", tools=list(self.tools_for_observation), skills=skill_names,
+              knowledge=len(knowledge))
 
     def decide(self, s: AgentState, ctx: CallContext):
         s.round += 1

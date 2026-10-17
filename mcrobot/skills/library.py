@@ -34,10 +34,12 @@ from pathlib import Path
 
 from .. import identity as idy
 from ..paths import skills_file
+from ..textmatch import tokens
 
 # 只读/说话类工具不值得进技能（学会了也没用）
 NON_SKILL_TOOLS = frozenset({"say", "get_state", "list_players", "get_inventory",
-                             "block_lookup", "skill_search", "skill_save"})
+                             "block_lookup", "skill_search", "skill_save",
+                             "recall", "remember"})
 
 
 def _now() -> str:
@@ -217,18 +219,8 @@ def record(name: str, ok: bool, version: str | None = None):
 # ------------------------------ 检索 ------------------------------
 
 
-def _tokens(q: str) -> list[str]:
-    """中英混合切词：英文按词，中文按 2 字滑窗（够用且零依赖）。"""
-    q = (q or "").lower()
-    out: list[str] = []
-    # 英文短词（a / of / we）只会制造噪声，低于 3 个字母的一律丢掉；中文单字有用，保留
-    out.extend(t for t in re.findall(r"[a-z0-9_]+", q) if len(t) >= 3)
-    for run in re.findall(r"[\u4e00-\u9fff]+", q):
-        if len(run) <= 2:
-            out.append(run)
-        else:
-            out.extend(run[i:i + 2] for i in range(len(run) - 1))
-    return [t for t in out if t]
+# 切词规则与知识库共用（中英混合；英文 <3 字母丢掉，中文 2 字滑窗）
+_tokens = tokens
 
 
 def _score(s: Skill, tokens: list[str]) -> int:

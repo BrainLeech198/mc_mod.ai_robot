@@ -379,6 +379,47 @@ def _t_skill_save(args: dict, ctx: CallContext) -> ToolResult:
                       text=f"技能 {name} 已入库（{len(clean)} 步）")
 
 
+# ------------------------------ 知识库（版本内查表） ------------------------------
+
+
+def _t_remember(args: dict, ctx: CallContext) -> ToolResult:
+    """记一条已核实的事实。出处必填——没出处的一律当猜测，不让进表。"""
+    from .. import knowledge as kno
+    topic = str(args.get("topic") or "").strip()
+    text = str(args.get("text") or "").strip()
+    source = str(args.get("source") or "").strip()
+    tags = args.get("tags") or []
+    if not isinstance(tags, list):
+        tags = [str(tags)]
+    try:
+        rec, created = kno.remember(topic, text, tags=tags, source=source)
+    except ValueError as e:
+        return ToolResult(False, "remember", "", error=str(e))
+    try:
+        kno.consolidate()   # 顺手刷新 knowledge.md，让人也能直接看
+    except Exception:
+        pass                # 文档刷新失败不影响记事实
+    msg = "已记下" if created else "这条已经记过了（命中 +1）"
+    return ToolResult(True, "remember", "", data=rec,
+                      text=f"{msg}：[{rec['id']}] {rec['topic']}：{rec['text']}")
+
+
+def _t_recall(args: dict, ctx: CallContext) -> ToolResult:
+    """按话题查表。查不到就明说，不要编。"""
+    from .. import knowledge as kno
+    q = str(args.get("query") or "").strip()
+    if not q:
+        return ToolResult(False, "recall", "", error="query 为空")
+    hits = kno.search(q, int(args.get("top_k") or 3))
+    if not hits:
+        return ToolResult(True, "recall", "", data={"hits": []},
+                          text=f"知识库里没有和「{q}」相关的事实，这次别硬套旧经验。")
+    briefs = [{"id": f["id"], "topic": f["topic"], "text": f["text"],
+               "source": f.get("source") or ""} for f in hits]
+    return ToolResult(True, "recall", "", data={"hits": briefs},
+                      text=json.dumps(briefs, ensure_ascii=False))
+
+
 # ------------------------------ 注册 ------------------------------
 
 
@@ -541,6 +582,26 @@ def build_registry() -> Registry:
                         "params": {"type": "object", "description": "参数名 → 默认值"},
                         "tags": {"type": "array", "items": {"type": "string"}}},
          "required": ["name", "steps"]}, SAFE, _t_skill_save))
+
+    reg.register(Tool(
+        "recall",
+        "查本版本知识库（server 常识、方块真名、指令坑、玩家偏好）。"
+        "干陌生的事之前先查；查不到就明说查不到，别编。",
+        {"type": "object",
+         "properties": {"query": {"type": "string", "description": "关键词，如「CFM 家具」「换皮肤」"},
+                        "top_k": {"type": "integer", "default": 3}},
+         "required": ["query"]}, SAFE, _t_recall))
+    reg.register(Tool(
+        "remember",
+        "把**核实过**的事实记进本版本知识库，下次同类问题直接查表。"
+        "source 必填（工具回执 / 玩家原话 / 手册第几节）；自己的猜测不要记。"
+        "例子：topic=方块，text=CFM 没有窗帘和数字时钟，垃圾篓 ID 是 rubbish_bin，source=方块目录.md",
+        {"type": "object",
+         "properties": {"topic": {"type": "string", "description": "分类，如 方块/指令/坐标/玩家"},
+                        "text": {"type": "string", "description": "一句话事实，别超 500 字"},
+                        "source": {"type": "string", "description": "出处，必填"},
+                        "tags": {"type": "array", "items": {"type": "string"}}},
+         "required": ["topic", "text", "source"]}, SAFE, _t_remember))
     return reg
 
 

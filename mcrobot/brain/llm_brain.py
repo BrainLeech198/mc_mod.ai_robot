@@ -190,8 +190,8 @@ class Brain:
         raise BrainError("unreachable")
 
     # ---------------- 提示词 ----------------
-    def _system_content(self) -> str:
-        """人格 + 世界常识 + 长期记忆（事件流 + AI 便签），拼进同一条 system 消息。
+    def _system_content(self, extra: str = "") -> str:
+        """人格 + 世界常识 + 长期记忆（事件流 + AI 便签 + 查表事实），拼进同一条 system 消息。
 
         有版本身份时走 idy.render_system（人格 + 自动世界常识 + 边界纪律，全部读自
         version/<版本>/ 的文档）；没有则退回内置 SYSTEM_PROMPT（单测与向后兼容）。
@@ -200,6 +200,8 @@ class Brain:
             mem = mem_mod.fmt_for_prompt(self.memory_events, self.memory_notes)
         except Exception:
             mem = ""
+        if extra:
+            mem = (mem + "\n\n" + extra).strip()
         if self.version:
             return idy.render_system(self.version, mem)
         content = SYSTEM_PROMPT
@@ -208,7 +210,13 @@ class Brain:
         return content
 
     def build_messages(self, speaker: str, text: str, env: dict | None = None) -> list[dict]:
-        msgs = [{"role": "system", "content": self._system_content()}]
+        # 知识库按当前这句话检索：只带相关事实，查不到就什么都不加
+        try:
+            from .. import knowledge as kno
+            kb = kno.fmt_for_prompt(text, top_k=3, version=self.version)
+        except Exception:
+            kb = ""
+        msgs = [{"role": "system", "content": self._system_content(kb)}]
         hist = self._hist.get(speaker, [])[-self.history_turns:]
         msgs.extend(hist)
         user = f"<{speaker}> {text}"
