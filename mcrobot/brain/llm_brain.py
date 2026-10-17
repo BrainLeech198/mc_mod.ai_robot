@@ -149,6 +149,11 @@ class Brain:
         self.agentic = bool(ag.get("enabled", False))
         self.agentic_rounds = int(ag.get("max_rounds", 4) or 4)
         self.agentic_budget = int(ag.get("action_budget", 20) or 20)
+        # 任务分解（mcagent）：高层目标先拆成有序子目标再逐个跑闭环。
+        # 默认开——闲聊/短目标会被 planner.looks_simple 挡掉，不会多花一次往返。
+        pl = ag.get("plan") or {}
+        self.plan_enabled = bool(pl.get("enabled", True))
+        self.plan_max = int(pl.get("max_subtasks", 6) or 6)
 
     # ---------------- HTTP ----------------
     def _http_chat(self, messages: list[dict]) -> str:
@@ -303,10 +308,13 @@ class Brain:
 
         与一次性回复的区别：动作**同步执行**并拿回执，自检判成败，
         失败就把批评喂回决策再试一轮；到上限或行动预算用尽则停手（不空转）。
+        mcagent 的任务分解：先拆成有序子目标再逐个跑闭环（`run_plan`），
+        前一个子目标的结果作为后一个的上下文。
         """
         from .agent_loop import AgentLoop
         from .checkpoint import Checkpointer
         from .llm_policy import make_decide, make_verify
+        from .planner import make_planner
         from ..tools.builtin import build_registry
         from ..tools.registry import dangerous_allowed
 
@@ -315,31 +323,37 @@ class Brain:
                          decide=make_decide(self._transport, reg),
                          verify=make_verify(self._transport),
                          max_rounds=self.agentic_rounds,
-                         action_budget=self.agentic_budget)
+                         action_budget=self.agentic_budget,
+                         plan_fn=make_planner(self._transport,
+                                              max_subtasks=self.plan_max)
+                         if self.plan_enabled else None)
         task_id = f"{speaker}-{int(time.time())}"
         try:
-            s = loop.run(text, actor=speaker, task_id=task_id,
-                         checkpoint=Checkpointer(),
-                         dangerous_allowed=dangerous_allowed(self.version))
+            s = loop.run_plan(text, actor=speaker, task_id=task_id,
+                              checkpoint=Checkpointer(),
+                              dangerous_allowed=dangerous_allowed(self.version))
         except Exception as e:
             _log({"op": "agentic_error", "by": speaker, "err": f"{type(e).__name__}: {e}"})
             return False
         _log({"op": "agentic_done", "by": speaker, "verdict": s.verdict,
               "round": s.round, "tool_calls": s.tool_calls,
-              "aborted": s.aborted, "critique": s.critique[:200]})
+              "steps": s.steps, "aborted": s.aborted,
+              "critique": s.critique[:200]})
         # say 工具内部已经 emit 过了，这里只判断「有没有说过话」，别再发一遍
         said = any(r.ok and r.tool == "say" for r in s.receipts)
         if not said:
             # 闭环跑完必须给玩家一个回音：模型常常只调动作、忘了 say，
             # 玩家那边就是「明明在动，一声不吭」。
+            how = f"{len(s.steps)} 步 " if len(s.steps) > 1 else ""
             if s.verdict == "ok":
-                br.emit({"say": f"做完了，{s.round} 轮 {s.tool_calls} 步"})
+                br.emit({"say": f"做完了，{how}{s.round} 轮 {s.tool_calls} 步"})
             else:
                 why = " ".join((s.critique or "没做成").split())[:44]
                 br.emit({"say": f"没搞定：{why}"})
         try:
             mem_mod.add("event", f"{speaker} 说：「{text}」→ agentic {s.verdict}"
-                                 f"（{s.round} 轮/{s.tool_calls} 次调用）", by=speaker)
+                                 f"（{len(s.steps)} 步/{s.round} 轮/{s.tool_calls} 次调用）",
+                        by=speaker)
         except Exception:
             pass
         return bool(s.receipts)

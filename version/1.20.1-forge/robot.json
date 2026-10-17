@@ -58,7 +58,12 @@
     "_说明": "Voyager 式闭环：动作同步执行 → 拿回执 → 自检判成败 → 失败就带批评重试，直到 max_rounds；action_budget 是整次任务的工具调用上限（防刷）。默认关（false）走已验证的一次性回复路径；打开前先确认大脑端点可用，否则每轮都会等到超时。",
     "enabled": true,
     "max_rounds": 4,
-    "action_budget": 20
+    "action_budget": 20,
+    "plan": {
+      "_说明": "任务分解（mcagent 的 task decomposition）：高层目标先拆成 2~6 个有序子目标，再逐个跑闭环，前一个的结果作为后一个的上下文；子目标失败即停（建造任务大多有依赖），剩下的标记 skipped。闲聊/短目标会被 planner.looks_simple 挡掉，不会多花一次 LLM 往返；拆失败一律退回单步，所以它只是增值层。关掉（false）就退回单层闭环。",
+      "enabled": true,
+      "max_subtasks": 6
+    }
   },
   "throttle": {
     "_说明": "防刷屏。同一玩家同一内容在 dedup_window_seconds 内只处理一次；机器人每条消息之间至少 min_send_interval_seconds；连续对同一玩家自动回复（问候/快答/抽样接话）不超过 max_consecutive_auto_replies 条；距上次同人自动回复超过 chain_reset_seconds 则计数重置。授权执行的确认/拒绝不受条数上限限制。",

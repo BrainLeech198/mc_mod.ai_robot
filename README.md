@@ -17,7 +17,8 @@ version/           身份与环境（一个版本文件夹 = 一份完整 AI 身
 mcrobot/           代码（分层）
   body/            身体：bridge（ControlMod 桥）· reflex（L0 反射）· loop（主循环）
   brain/           大脑：protocol（inbox/outbox 契约）· llm_brain（L1 API）·
-                   bridge_brain（L2 人肉）· agent_loop（编排）· llm_policy（决策/自检）·
+                   bridge_brain（L2 人肉）· agent_loop（编排/任务分解）· llm_policy（决策/自检）·
+                   planner（高层目标→有序子目标）·
                    checkpoint（断点续跑）
   tools/           工具层：registry（MCP 风格注册表）· builtin（28 个工具）· mcp_server
   skills/          技能库：library（存取/检索/学习）· build（预置建造模板）
@@ -26,7 +27,7 @@ mcrobot/           代码（分层）
   textmatch.py     中英混合检索打分（技能库/知识库共用）
   ops/             运维：supervisor · launch_client · sftp · cleanup · reply
   console/         本地网页控制台（:8901）
-tests/             单测（271 项）
+tests/             单测（292 项）
 controlmod/        Forge 客户端 mod 源码
 instance/          游戏运行时目录（不入库）
 ```

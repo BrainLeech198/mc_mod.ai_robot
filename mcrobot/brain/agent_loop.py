@@ -46,6 +46,11 @@ class AgentState:
     verdict: str | None = None      # "ok" | "fail" | None
     critique: str = ""
     aborted: str = ""               # 熔断原因
+    # 任务分解（planner）：steps 是有序子目标，subtasks 是每个子目标的执行结果摘要，
+    # context 是前序子目标的结果——只作为文字上下文传给 decide，不共享状态对象。
+    steps: list[str] = field(default_factory=list)
+    subtasks: list[dict] = field(default_factory=list)
+    context: str = ""
     trace: list[dict] = field(default_factory=list)
 
     def log(self, node: str, **kv: Any):
@@ -58,6 +63,8 @@ class AgentState:
                 "verdict": self.verdict, "observation": self.observation,
                 "plan": self.plan, "actions": self.actions,
                 "critique": self.critique, "aborted": self.aborted,
+                "steps": self.steps, "subtasks": self.subtasks,
+                "context": self.context,
                 "receipts": [r.to_dict() for r in self.receipts],
                 "trace": self.trace}
 
@@ -73,6 +80,8 @@ class AgentState:
                 aborted=d.get("aborted") or "",
                 observation=d.get("observation") or {},
                 plan=d.get("plan") or [], actions=d.get("actions") or [],
+                steps=d.get("steps") or [], subtasks=d.get("subtasks") or [],
+                context=d.get("context") or "",
                 trace=d.get("trace") or [])
         for r in d.get("receipts") or []:
             s.receipts.append(ToolResult(bool(r.get("ok")), r.get("tool") or "",
@@ -117,7 +126,9 @@ class AgentLoop:
                  action_budget: int = 20,
                  tools_for_observation: tuple[str, ...] = ("get_state",),
                  skills_enabled: bool = True,
-                 lessons_enabled: bool = True):
+                 lessons_enabled: bool = True,
+                 plan_fn: Callable[[str], list[str]] | None = None,
+                 stop_on_fail: bool = True):
         self.registry = registry or build_registry()
         # 注意：不能叫 self.decide / self.verify —— 会盖掉同名节点方法
         self.decide_fn = decide or _fallback_decide
@@ -130,6 +141,9 @@ class AgentLoop:
         # mcagent 的反思：失败沉淀成知识库里的「教训」，下次同类目标检索得到。
         # 关掉给单测用——不然每次跑失败用例都往版本知识表里写垃圾。
         self.lessons_enabled = lessons_enabled
+        # mcagent 的任务分解：注入 plan_fn 才能拆；没注入就还是单层闭环（老行为）。
+        self.plan_fn = plan_fn
+        self.stop_on_fail = stop_on_fail
 
     # ---------------- 节点 ----------------
 
@@ -198,8 +212,12 @@ class AgentLoop:
 
     def run(self, goal: str, *, actor: str = "", dry: bool = False,
             dangerous_allowed: tuple[str, ...] = (), task_id: str = "",
-            checkpoint=None) -> AgentState:
-        """跑一次任务。给了 checkpoint 就每拍落盘；同 task_id 有存档则从存档续跑。"""
+            checkpoint=None, context: str = "") -> AgentState:
+        """跑一次任务。给了 checkpoint 就每拍落盘；同 task_id 有存档则从存档续跑。
+
+        context 是任务分解时前序子目标的结果摘要，只作为文字上下文传给 decide
+        （`render_state` 会渲染），不参与状态恢复之外的任何逻辑。
+        """
         s = None
         if checkpoint and task_id:
             s = checkpoint.load(task_id)
@@ -208,7 +226,8 @@ class AgentLoop:
         if s is None:
             s = AgentState(goal=goal, task_id=task_id, actor=actor,
                            max_rounds=self.max_rounds,
-                           dangerous_allowed=dangerous_allowed)
+                           dangerous_allowed=dangerous_allowed,
+                           context=context or "")
         ctx = CallContext(actor=actor, dry=dry, dangerous_allowed=dangerous_allowed)
         node = next_node(s)
         while node is not END:
@@ -254,6 +273,64 @@ class AgentLoop:
                          tags=["闭环", "失败"], source=f"闭环 {s.task_id or '无 task_id'}")
         except Exception:
             pass
+
+    # ---------------- 任务分解（mcagent 的 task decomposition） ----------------
+
+    def run_plan(self, goal: str, *, actor: str = "", dry: bool = False,
+                 dangerous_allowed: tuple[str, ...] = (), task_id: str = "",
+                 checkpoint=None) -> AgentState:
+        """先拆成有序子目标，再逐个跑闭环；前一个的结果作为后一个的上下文。
+
+        没有注入 plan_fn 时退化成单步（= 老行为），所以 planner 永远是增值层。
+        子目标默认失败即停（建造任务大多有依赖），剩下的标记成 skipped 不空跑。
+        返回的 AgentState 是**汇总态**：goal 是原始目标，steps/subtasks 记录拆了啥、
+        每个子目标成败如何，verdict/tool_calls/receipts 是合并后的结果。
+        """
+        steps = [goal]
+        if self.plan_fn:
+            try:
+                steps = list(self.plan_fn(goal) or [goal]) or [goal]
+            except Exception:
+                steps = [goal]          # 拆失败不许把任务搞失败
+        total = AgentState(goal=goal, task_id=task_id, actor=actor,
+                           max_rounds=self.max_rounds,
+                           dangerous_allowed=dangerous_allowed, steps=steps)
+        total.log("plan", steps=steps, n=len(steps))
+        done: list[str] = []            # 前序子目标的一句话结果，传给下一个
+        for i, sub in enumerate(steps, 1):
+            if total.aborted:
+                total.subtasks.append({"goal": sub, "verdict": "skipped",
+                                       "critique": f"前序失败，跳过（{total.aborted}）",
+                                       "round": 0, "tool_calls": 0, "task_id": ""})
+                continue
+            s = self.run(sub, actor=actor, dry=dry,
+                         dangerous_allowed=dangerous_allowed,
+                         task_id=f"{task_id}-{i}" if task_id else "",
+                         checkpoint=checkpoint, context="；".join(done))
+            total.subtasks.append({"goal": sub, "verdict": s.verdict or "fail",
+                                   "critique": (s.critique or s.aborted or "")[:200],
+                                   "round": s.round, "tool_calls": s.tool_calls,
+                                   "task_id": s.task_id})
+            total.receipts.extend(s.receipts)
+            total.actions.extend(s.actions)
+            total.tool_calls += s.tool_calls
+            total.round = max(total.round, s.round)
+            line = f"{sub}→{s.verdict or 'fail'}"
+            if s.verdict != "ok":
+                total.critique = f"第 {i}/{len(steps)} 步「{sub}」没做成：" \
+                                 f"{(s.critique or s.aborted or '未知原因')[:160]}"
+                if self.stop_on_fail:
+                    total.aborted = f"子目标 {i} 失败，后续 {len(steps) - i} 步跳过"
+                total.log("plan_step", i=i, goal=sub, verdict=s.verdict)
+                done.append(line)
+                continue
+            done.append(line)
+            total.log("plan_step", i=i, goal=sub, verdict="ok")
+        total.verdict = "ok" if all(
+            t["verdict"] == "ok" for t in total.subtasks) and total.subtasks else "fail"
+        if total.verdict == "fail" and not total.critique:
+            total.critique = total.aborted or "有子目标没做成"
+        return total
 
 
 # ---------------- 默认策略（无 LLM 时的兜底，保证链路永远能跑） ----------------

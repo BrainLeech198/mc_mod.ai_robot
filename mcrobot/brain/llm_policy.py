@@ -161,6 +161,8 @@ def render_state(s, specs: list[dict]) -> str:
     parts = [f"# 目标\n{s.goal}",
              f"\n# 下达者\n{s.actor or '未知'}（危险操作白名单："
              f"{', '.join(s.dangerous_allowed) if s.dangerous_allowed else '无'}）"]
+    if getattr(s, "context", ""):
+        parts.append(f"\n# 前序子目标的结果\n{s.context}")
     if s.observation:
         parts.append("\n# 环境观察\n" + json.dumps(s.observation, ensure_ascii=False)[:1200])
     if s.receipts:
