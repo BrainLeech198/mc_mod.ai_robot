@@ -59,8 +59,15 @@
     <pre id="auto" class="out"></pre>
   </section>
 
-  <!-- 中：对话 -->
+  <!-- 中：一键全链路 + 对话 -->
   <section class="col wide">
+    <h2>一键全链路 <span class="hint" id="chainHint"></span></h2>
+    <div class="row">
+      <button id="btnChain">一键启动全链路</button>
+      <button id="btnChainStop" class="ghost">中止</button>
+    </div>
+    <div id="chainSteps" class="chainSteps"></div>
+
     <h2>对话流 <span class="hint" id="queueHint"></span></h2>
     <div id="feed" class="feed"></div>
     <div class="composer">

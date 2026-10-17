@@ -80,6 +80,23 @@ function renderStatus() {
   $("btnBrain").textContent = s.console_brain === "running" ? "停止 L1 大脑" : "启动 L1 大脑";
 }
 
+function renderChain() {
+  const c = state.chain || {};
+  const st = c.running ? "跑着呢…"
+    : c.ok === true ? "全绿 ✓"
+    : c.ok === false ? "卡住：" + (c.error || "?")
+    : "还没跑过";
+  $("chainHint").textContent = st;
+  $("btnChain").disabled = !!c.running;
+  $("btnChain").textContent = c.running ? "全链路进行中…" : "一键启动全链路";
+  const mark = { ok: "✓", skipped: "·", failed: "✗", running: "…", pending: "○" };
+  $("chainSteps").innerHTML = (c.steps || []).map((s) =>
+    `<div class="cstep ${s.state}"><b>${mark[s.state] || "?"}</b>` +
+    `<span class="lbl">${s.label}</span><span class="det">${escapeHtml(s.detail || "")}` +
+    `${s.secs != null ? ` (${s.secs}s)` : ""}</span></div>`).join("")
+    || '<div class="hint">点上面那个按钮，一条龙把链路拉起来</div>';
+}
+
 async function refresh() {
   try {
     state = await api("/api/state");
@@ -88,6 +105,7 @@ async function refresh() {
     renderClients();
     renderPreset(preset.preset);
     renderStatus();
+    renderChain();
     renderFeed();
   } catch (e) {
     $("queueHint").textContent = "控制台未连通";
@@ -95,6 +113,16 @@ async function refresh() {
 }
 
 /* ---- 交互 ---- */
+$("btnChain").onclick = async () => {
+  const r = await api("/api/chain/start", {});
+  if (!r.ok) alert(r.msg);
+  refresh();
+};
+$("btnChainStop").onclick = async () => {
+  const r = await api("/api/chain/stop", {});
+  if (!r.ok) alert(r.msg);
+  refresh();
+};
 $("btnUse").onclick = async () => {
   await api("/api/client/use", { id: $("clientSel").value });
   refresh();

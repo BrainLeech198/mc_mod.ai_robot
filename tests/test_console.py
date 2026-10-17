@@ -124,5 +124,43 @@ class RouteTest(unittest.TestCase):
             self.assertTrue(callable(fn), f"{m} {p}")
 
 
+class ChainTest(unittest.TestCase):
+    """一键全链路的控制台侧：接口在、状态读得到、重复点会被拦住。
+
+    绝不真的调 chain_start()——那会真去起客户端和数据流。只测守卫与状态。
+    """
+    def setUp(self):
+        self._old = dict(cs._CHAIN)
+        cs._CHAIN.update(thread=None, stop=None)
+
+    def tearDown(self):
+        cs._CHAIN.update(self._old)
+
+    def test_routes_registered(self):
+        for m, p in (("POST", "/api/chain/start"), ("POST", "/api/chain/stop"),
+                     ("GET", "/api/chain/status")):
+            self.assertIn((m, p), cs.ROUTES)
+
+    def test_status_never_raises_without_file(self):
+        st = cs.chain_status()
+        self.assertIn("console_running", st)
+        self.assertFalse(st["console_running"])
+
+    def test_start_refused_while_running(self):
+        class Alive:                   # 假装后台线程还在跑
+            def is_alive(self):
+                return True
+        cs._CHAIN["thread"] = Alive()
+        r = cs.chain_start()
+        self.assertFalse(r["ok"])
+        self.assertIn("正在跑", r["msg"])
+
+    def test_stop_when_idle(self):
+        self.assertFalse(cs.chain_stop()["ok"])
+
+    def test_state_payload_carries_chain(self):
+        self.assertIn("chain", cs.api_state())
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

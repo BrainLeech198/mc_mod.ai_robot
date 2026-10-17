@@ -71,3 +71,14 @@ button:hover { filter: brightness(1.1); }
   font: 12px/1.5 Consolas, monospace; white-space: pre-wrap; color: #c9d1e0;
 }
 .out.tall { height: 300px; }
+
+/* 一键全链路：每步一行，颜色直接反映状态，扫一眼就知道卡在哪 */
+.chainSteps { margin: 6px 0 14px; border: 1px solid var(--line); border-radius: 8px; padding: 6px 8px; }
+.cstep { display: flex; align-items: baseline; gap: 8px; font-size: 13px; padding: 2px 0; }
+.cstep b { width: 12px; text-align: center; color: var(--dim); }
+.cstep .lbl { min-width: 84px; }
+.cstep .det { color: var(--dim); font-size: 12px; }
+.cstep.ok b, .cstep.ok .lbl { color: var(--ok); }
+.cstep.running b, .cstep.running .lbl { color: var(--warn); }
+.cstep.failed b, .cstep.failed .lbl { color: var(--bad); }
+.cstep.skipped b { color: var(--dim); }

@@ -21,6 +21,7 @@ import os
 import re
 import subprocess
 import sys
+import threading
 import time
 import urllib.request
 from datetime import datetime
@@ -33,6 +34,7 @@ from ..paths import REPO, ROBOT_DIR
 
 from ..brain import protocol as br
 from .. import identity as idy
+from ..ops import orchestrator as orch
 
 STATIC = HERE / "web"
 ROBOT_DIR = REPO / "instance" / "robot"
@@ -252,6 +254,45 @@ def brain_status() -> dict:
             "bridge_watch": _running("mcrobot.brain.bridge_brain")}
 
 
+# ---------------- 一键全链路（后端→客户端→关界面→身体→大脑）----------------
+_CHAIN: dict = {"thread": None, "stop": None}
+
+
+def chain_start() -> dict:
+    """后台线程跑编排，立刻返回——客户端要 40–60 秒才起得来，不能把请求挂住。"""
+    t = _CHAIN.get("thread")
+    if t and t.is_alive():
+        return {"ok": False, "msg": "全链路正在跑，别重复点"}
+    stop = threading.Event()
+    deps = orch.real_deps()          # 大脑那两步会走控制台自己的 brain_start，灯才准
+
+    def work():
+        try:
+            orch.run(deps=deps, stop=stop)
+        finally:
+            _CHAIN.update(thread=None, stop=None)
+
+    th = threading.Thread(target=work, name="chain", daemon=True)
+    _CHAIN.update(thread=th, stop=stop)
+    th.start()
+    return {"ok": True, "msg": "已开始：后端 → 客户端 → 关界面 → 身体 → 大脑"}
+
+
+def chain_stop() -> dict:
+    stop = _CHAIN.get("stop")
+    if not stop:
+        return {"ok": False, "msg": "全链路没在跑"}
+    stop.set()
+    return {"ok": True, "msg": "已请求中止（正在跑的那一步会跑完）"}
+
+
+def chain_status() -> dict:
+    st = orch.status()
+    t = _CHAIN.get("thread")
+    st["console_running"] = bool(t and t.is_alive())
+    return st
+
+
 # ---------------- API ----------------
 def api_state(_body=None) -> dict:
     ver = idy.active_version()
@@ -267,6 +308,7 @@ def api_state(_body=None) -> dict:
                     "probe": endpoint_ok(be.get("endpoint", ""))},
         "status": {"body": body_alive(), "game": game_state(),
                    "supervisor": _running("mcrobot.ops.supervisor"), **brain_status()},
+        "chain": chain_status(),
         "queue": {"inbox_lines": len(lines), "ptr": br._ptr(),
                   "unread": max(0, len(lines) - br._ptr()),
                   "inbox": _jsonl_tail(ROBOT_DIR / "inbox.jsonl", 15),
@@ -361,6 +403,9 @@ ROUTES = {
         (b or {}).get("q", ""), int((b or {}).get("limit", 20) or 20))},
     ("POST", "/api/brain/start"): lambda b: brain_start(),
     ("POST", "/api/brain/stop"): lambda b: brain_stop(),
+    ("POST", "/api/chain/start"): lambda b: chain_start(),
+    ("POST", "/api/chain/stop"): lambda b: chain_stop(),
+    ("GET", "/api/chain/status"): lambda b: chain_status(),
     ("POST", "/api/say"): lambda b: (br.emit({"say": b["text"]}), {"ok": True})[1],
     ("POST", "/api/cmd"): lambda b: (br.emit({"cmd": b["command"]}), {"ok": True})[1],
     ("GET", "/api/logs"): api_logs,

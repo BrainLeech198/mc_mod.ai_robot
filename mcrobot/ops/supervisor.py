@@ -27,14 +27,18 @@ import sys
 import time
 from pathlib import Path
 
-from ..paths import REPO, SIM
+from ..paths import REPO, SIM, load_secrets
 RUNTIME = REPO / "instance" / "robot"
 STATE = RUNTIME / "supervisor.json"
 
 # 名称 -> (cwd, 命令, 日志)
 JOBS: dict[str, tuple[Path, list[str], str]] = {
     "robot": (REPO, [sys.executable, "-u", "-m", "mcrobot.body.loop", "--interval", "1.0"], "loop.out"),
-    "deepsink": (SIM, [sys.executable, "-u", "deepsink_server.py", "serve", "--backend", "bridge",
+    # 不传 --backend：deepsink.json 说了算。曾经硬编码 "--backend bridge"，而
+    # cmd_serve 是 `if backend: cfg["backend"] = backend`——命令行会**覆盖**配置文件，
+    # 于是切到 openai（真模型）之后，走本守护起后端就会被静默拉回 bridge（人肉代答），
+    # 表现为「MiMo 明明配好了却不干活」。别再传这个参数。
+    "deepsink": (SIM, [sys.executable, "-u", "deepsink_server.py", "serve",
                        "--port", "8788"], "deepsink.out"),
     "console": (REPO, [sys.executable, "-u", "-m", "mcrobot.console.server",
                        "--port", "8901"], "console.out"),
@@ -117,6 +121,10 @@ def _save_state(jobs: list["Proc"], started: float) -> None:
 
 def cmd_start(args) -> int:
     RUNTIME.mkdir(parents=True, exist_ok=True)
+    # 子进程继承本进程环境，所以 key 必须在这里先灌进来：deepsink 的 openai 后端要
+    # DEEPSINK_UPSTREAM_KEY、L1 大脑要 MCROBOT_LLM_KEY，都只存在 secrets.env 里。
+    # 漏了这步的表现是后端起来了但每次请求 500（上游没鉴权），很难一眼看出原因。
+    load_secrets()
     jobs = build_jobs(args.with_deepsink, args.with_api_brain, args.with_console)
     started = time.time()
     for j in jobs:
