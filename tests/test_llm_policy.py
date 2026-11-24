@@ -220,5 +220,59 @@ class _FakeState:
         pass
 
 
+class TransportErrorTest(unittest.TestCase):
+    """传输层故障必须穿透，不许吞成空计划（2026-10-17 停电记错账的根因）。"""
+
+    def test_all_attempts_fail_reraises(self):
+        from mcrobot.brain.llm_policy import _ask_with_retry
+
+        def ask(msgs):
+            raise OSError("[WinError 10061] 由于目标计算机积极拒绝")
+
+        with self.assertRaises(OSError):
+            _ask_with_retry(ask, [], tries=2, pause=0)
+
+    def test_later_attempt_success_returns_raw(self):
+        from mcrobot.brain.llm_policy import _ask_with_retry
+        seq = [OSError("timeout"), '[{"name":"say"}]']
+
+        def ask(msgs):
+            v = seq.pop(0)
+            if isinstance(v, Exception):
+                raise v
+            return v
+
+        self.assertEqual(_ask_with_retry(ask, [], tries=2, pause=0),
+                         '[{"name":"say"}]')
+
+    def test_busy_reply_is_not_transport_error(self):
+        # 上游回「服务暂时繁忙」是正常回复（不是异常）：老行为不变——
+        # 解析不出 → 空计划 → verify 判 fail（那是模型/服务侧的事，照记）
+        from mcrobot.brain.llm_policy import _ask_with_retry
+        raw = _ask_with_retry(lambda m: "（服务暂时繁忙，请稍后再试）",
+                              [], tries=1, pause=0)
+        self.assertIn("繁忙", raw)
+
+    def test_decide_propagates_transport_error(self):
+        reg = build_registry()
+
+        def ask(msgs):
+            raise OSError("[WinError 10061]")
+
+        decide = make_decide(ask, reg)
+        with self.assertRaises(OSError):
+            decide(_FakeState())
+
+    def test_verify_propagates_transport_error(self):
+        verify = make_verify(lambda m: (_ for _ in ()).throw(
+            OSError("timeout")))
+        s = _FakeState()
+        s.receipts = []      # 零回执走的是另一条分支，先塞一个假回执
+        from mcrobot.tools.registry import ToolResult
+        s.receipts = [ToolResult(True, "say", "", text="ok")]
+        with self.assertRaises(OSError):
+            verify(s)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

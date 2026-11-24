@@ -86,6 +86,9 @@ class AgentState:
     # 只读轮（核对/确认类子目标）：act 会拒收改世界工具（见 _WORLD_TOOLS）。
     # 序列化是为了断点续跑不丢约束。
     read_only: bool = False
+    # 考场停电：大脑端点/自检请求传输层故障（不是模型答不出题）。置了它，
+    # 本轮不计能力账（curriculum）、不沉淀教训——停电不算考生错。
+    infra_error: str = ""
     trace: list[dict] = field(default_factory=list)
 
     def log(self, node: str, **kv: Any):
@@ -100,6 +103,7 @@ class AgentState:
                 "critique": self.critique, "aborted": self.aborted,
                 "steps": self.steps, "subtasks": self.subtasks,
                 "context": self.context, "read_only": self.read_only,
+                "infra_error": self.infra_error,
                 "receipts": [r.to_dict() for r in self.receipts],
                 "trace": self.trace}
 
@@ -118,6 +122,7 @@ class AgentState:
                 steps=d.get("steps") or [], subtasks=d.get("subtasks") or [],
                 context=d.get("context") or "",
                 read_only=bool(d.get("read_only")),
+                infra_error=d.get("infra_error") or "",
                 trace=d.get("trace") or [])
         for r in d.get("receipts") or []:
             s.receipts.append(ToolResult(bool(r.get("ok")), r.get("tool") or "",
@@ -221,7 +226,16 @@ class AgentLoop:
 
     def decide(self, s: AgentState, ctx: CallContext):
         s.round += 1
-        s.plan = list(self.decide_fn(s) or [])
+        try:
+            s.plan = list(self.decide_fn(s) or [])
+        except Exception as e:
+            # 传输层故障（端点挂了/网络断）：不是模型答不出题。标成 infra 中止——
+            # 不进能力账、不沉淀教训。以前异常被 _ask_with_retry 吞掉退回空计划，
+            # 一次端点抖动就被记成任务失败（2026-10-17 真机踩过）。
+            s.infra_error = f"大脑端点不可达：{str(e)[:150]}"
+            s.aborted = s.infra_error
+            s.log("decide_infra", err=s.infra_error[:200])
+            return
         s.log("decide", round=s.round,
               plan=[c.get("name") for c in s.plan])
 
@@ -254,7 +268,14 @@ class AgentLoop:
         s.plan = []
 
     def verify(self, s: AgentState, ctx: CallContext):
-        ok, critique = self.verify_fn(s)
+        try:
+            ok, critique = self.verify_fn(s)
+        except Exception as e:
+            # 自检请求传输失败：同样是考场停电，判不了成败就不判
+            s.infra_error = f"自检请求不可达：{str(e)[:150]}"
+            s.aborted = s.infra_error
+            s.log("verify_infra", err=s.infra_error[:200])
+            return
         s.verdict = "ok" if ok else "fail"
         s.critique = critique or ""
         s.log("verify", verdict=s.verdict, critique=s.critique[:200])
@@ -304,9 +325,10 @@ class AgentLoop:
                 skl.learn_from_actions(s.goal, s.actions)
             except Exception:
                 pass
-        if self.lessons_enabled and s.verdict != "ok":
+        if self.lessons_enabled and s.verdict != "ok" and not s.infra_error:
             # mcagent 的反思：做成的路进技能库，做错的路进知识库当「教训」——
             # 下次同类目标在 perceive 就能检索到，不用同一個坑踩两次。
+            # infra（考场停电）除外：端点挂了没什么可教训的。
             self._remember_lesson(s)
         return s
 
@@ -340,6 +362,8 @@ class AgentLoop:
         2026-10-17 补墙事故里模型就是在验收步把好石头覆盖成圆石的。
         返回的 AgentState 是**汇总态**：goal 是原始目标，steps/subtasks 记录拆了啥、
         每个子目标成败如何，verdict/tool_calls/receipts 是合并后的结果。
+        verdict 可能是 "infra"（考场停电：端点/自检请求传输层故障，步骤没考成）——
+        这种整单不计能力账、不沉淀教训，也不算它做砸了。
         跑完按难度定级记进分级表（curriculum，curriculum_enabled 可关）；
         目标高于已验证等级时，第一个子目标的 context 里会多一句「超纲提醒」。
         """
@@ -376,6 +400,19 @@ class AgentLoop:
                          checkpoint=checkpoint,
                          context=note if i == 1 else "；".join(done),
                          read_only=is_verification_goal(sub))
+            if s.infra_error:
+                # 考场停电：这步没考成。标 infra 不算失败，后面几步也不烧了
+                # （ outage 期间让它继续动世界只会添乱），curriculum 更不记。
+                total.subtasks.append({"goal": sub, "verdict": "infra",
+                                       "critique": s.infra_error[:200],
+                                       "round": s.round, "tool_calls": s.tool_calls,
+                                       "task_id": s.task_id})
+                total.infra_error = total.infra_error or s.infra_error
+                if self.stop_on_fail:
+                    total.aborted = f"子目标 {i} 因基础设施故障中止，后续 {len(steps) - i} 步跳过"
+                total.log("plan_step", i=i, goal=sub, verdict="infra")
+                done.append(f"{sub}→infra")
+                continue
             total.subtasks.append({"goal": sub, "verdict": s.verdict or "fail",
                                    "critique": (s.critique or s.aborted or "")[:200],
                                    "round": s.round, "tool_calls": s.tool_calls,
@@ -397,11 +434,18 @@ class AgentLoop:
             total.log("plan_step", i=i, goal=sub, verdict="ok")
         total.verdict = "ok" if all(
             t["verdict"] == "ok" for t in total.subtasks) and total.subtasks else "fail"
-        if total.verdict == "fail" and not total.critique:
+        if total.infra_error and not any(
+                t["verdict"] == "fail" for t in total.subtasks):
+            # 全程没 genuine 失败、只是被停电打断：verdict=infra（不算它做砸了）
+            total.verdict = "infra"
+        if total.verdict == "infra":
+            total.critique = total.infra_error
+        elif total.verdict == "fail" and not total.critique:
             total.critique = total.aborted or "有子目标没做成"
-        if self.curriculum_enabled:
+        if self.curriculum_enabled and not total.infra_error:
             # 只记目标级一次（子目标的成败已经在 subtasks 里）——分级账回答的是
             # 「玩家交给它的任务做成没做成」，不是内部步骤的流水。
+            # **有任何一步 infra 就整单不记**：考试被打断，成绩单上留白。
             try:
                 from .. import curriculum as cur
                 cur.record(goal, total.verdict, level=level, steps=len(steps),

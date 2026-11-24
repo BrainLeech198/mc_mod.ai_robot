@@ -361,6 +361,10 @@ class Brain:
             how = f"{len(s.steps)} 步 " if len(s.steps) > 1 else ""
             if s.verdict == "ok":
                 br.emit({"say": f"做完了，{how}{s.round} 轮 {s.tool_calls} 步"})
+            elif s.verdict == "infra":
+                # 考场停电要照说，但说清楚是停电不是没做成——玩家才知道该去修链路
+                why = " ".join((s.infra_error or "链路故障").split())[:40]
+                br.emit({"say": f"链路故障，这单没考成：{why}"})
             else:
                 why = " ".join((s.critique or "没做成").split())[:44]
                 br.emit({"say": f"没搞定：{why}"})

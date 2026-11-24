@@ -100,11 +100,11 @@
     "_说明": "看图（mcrobot/vision.py + look 工具）：截图 → 多模态模型 → 文字描述。enabled=false 时工具会明确拒答。endpoint/model 留空则复用 llm_api；但本机 DeepSink 目前会把 messages.content 拍平成文本（deepsink_server.py:_text_of），图片过不去，所以这里直连上游 MiMo。key 从 key_env 指的环境变量读，其次 MCROBOT_VISION_KEY / MCROBOT_LLM_KEY。换视觉服务只改 endpoint+model+key_env。验证：python -m mcrobot.vision check。",
     "enabled": true,
     "endpoint": "https://api.xiaomimimo.com/v1",
-    "model": "mimo-v2.6-flash",
+    "model": "mimo-v2.6-pro",
     "key_env": "DEEPSINK_UPSTREAM_KEY",
     "max_width": 854,
     "detail": "auto",
     "timeout_seconds": 60,
-    "max_tokens": 600
+    "max_tokens": 3000
   }
 }

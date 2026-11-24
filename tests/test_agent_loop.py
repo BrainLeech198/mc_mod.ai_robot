@@ -1,10 +1,16 @@
 """编排层单测：图走向、自检闭环、重试上限、行动预算、失败止损、可观测。"""
 from __future__ import annotations
 
+import json
+import os
+import tempfile
 import unittest
+from unittest import mock
 
 from mcrobot.brain.agent_loop import (AgentLoop, AgentState, is_verification_goal,
                                       next_node)
+from mcrobot.brain.llm_brain import BrainError
+from mcrobot.brain.llm_policy import make_decide, make_verify
 from mcrobot.tools.registry import CallContext, Registry, Tool, ToolResult
 
 
@@ -320,6 +326,141 @@ class ReadOnlyVerifyTest(unittest.TestCase):
         d = s.to_dict()
         d["read_only"] = False
         self.assertFalse(AgentState.from_dict(d).read_only)
+
+
+class InfraOutageTest(unittest.TestCase):
+    """考场停电：大脑端点/自检请求传输层故障，不算考生答不出题。
+
+    2026-10-17 真机踩过：端点抖动时 decide 的异常被 _ask_with_retry 吞掉、
+    静默退回空计划，闭环判 fail，一次停电被记进 curriculum 能力账
+    （还沉淀成「教训」）。现在：异常穿透到 loop → 标 infra → 整单不记账。
+    """
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.cur_file = os.path.join(self.tmp.name, "curriculum.jsonl")
+
+    def _env(self):
+        return mock.patch.dict(os.environ,
+                               {"MCROBOT_CURRICULUM_FILE": self.cur_file})
+
+    def test_decide_transport_error_marks_infra(self):
+        def boom(s):
+            raise BrainError("网络错误: [WinError 10061] 目标计算机积极拒绝")
+
+        loop = AgentLoop(registry=_reg("say"), tools_for_observation=(),
+                         decide=boom, verify=lambda s: (True, ""))
+        s = loop.run("补墙")
+        self.assertIn("10061", s.infra_error)
+        self.assertTrue(s.aborted)
+        self.assertIsNone(s.verdict)          # 没判成也没判败——没考成
+        self.assertEqual(s.tool_calls, 0)
+        self.assertTrue(any(t["node"] == "decide_infra" for t in s.trace))
+
+    def test_verify_transport_error_marks_infra(self):
+        def boom(s):
+            raise BrainError("HTTP 502")
+
+        loop = AgentLoop(registry=_reg("say"), tools_for_observation=(),
+                         decide=lambda s: [{"name": "say", "arguments": {}}],
+                         verify=boom)
+        s = loop.run("说句话")
+        self.assertIn("502", s.infra_error)
+        self.assertTrue(s.aborted)
+
+    def test_infra_skips_lesson_recording(self):
+        # 停电不沉淀教训：端点挂了没什么可学的
+        from unittest import mock
+
+        def boom(s):
+            raise BrainError("网络错误: timeout")
+
+        with mock.patch("mcrobot.knowledge.remember") as mem:
+            loop = AgentLoop(registry=_reg("say"), tools_for_observation=(),
+                             decide=boom, verify=lambda s: (True, ""),
+                             lessons_enabled=True)
+            s = loop.run("补墙")
+        self.assertTrue(s.infra_error)
+        mem.assert_not_called()
+
+    def test_plan_infra_subtask_skips_rest_and_curriculum(self):
+        calls = {"n": 0}
+
+        def decide(s):
+            calls["n"] += 1
+            if calls["n"] == 1:               # 第一步就撞上端点故障
+                raise BrainError("网络错误: [WinError 10061]")
+            return [{"name": "say", "arguments": {}}]
+
+        loop = AgentLoop(registry=_reg("say"), tools_for_observation=(),
+                         decide=decide, verify=lambda s: (True, ""),
+                         plan_fn=lambda g: ["找到缺的那格用圆石补上",
+                                            "block_probe核对该格确认",
+                                            "say 报告"],
+                         lessons_enabled=False, curriculum_enabled=True)
+        with self._env():
+            s = loop.run_plan("补墙")
+        self.assertEqual([t["verdict"] for t in s.subtasks],
+                         ["infra", "skipped", "skipped"])
+        self.assertEqual(s.verdict, "infra")
+        self.assertIn("10061", s.critique)
+        self.assertIn("基础设施故障", s.aborted)
+        self.assertEqual(calls["n"], 1)       # 停电后不继续考后面的
+        self.assertFalse(os.path.exists(self.cur_file))   # 账上一片空白
+
+    def test_plan_genuine_fail_still_records(self):
+        # 对照：真失败照记——闸只放行停电，不放水
+        def boom(s):
+            raise BrainError("网络错误: timeout")
+
+        loop = AgentLoop(registry=_reg("say"), tools_for_observation=(),
+                         decide=boom, verify=lambda s: (True, ""),
+                         plan_fn=lambda g: ["找到缺的那格用圆石补上"],
+                         lessons_enabled=False, curriculum_enabled=True)
+        with self._env():
+            s = loop.run_plan("在你旁边放一格圆石并核对")
+        self.assertEqual(s.verdict, "infra")
+
+        loop2 = AgentLoop(registry=_reg("say"), tools_for_observation=(),
+                          decide=lambda s: [{"name": "say", "arguments": {}}],
+                          verify=lambda s: (False, "没放上"),
+                          plan_fn=lambda g: ["找到缺的那格用圆石补上"],
+                          lessons_enabled=False, curriculum_enabled=True)
+        with self._env():
+            s2 = loop2.run_plan("在你旁边放一格圆石并核对")
+        self.assertEqual(s2.verdict, "fail")
+        recs = [json.loads(l) for l in
+                open(self.cur_file, encoding="utf-8").readlines()]
+        self.assertEqual(len(recs), 1)        # 只记了真失败那回
+        self.assertEqual(recs[0]["verdict"], "fail")
+
+    def test_incident_replay_outage_is_not_capability_fail(self):
+        """事故重放：2026-10-17 21:37 那次「0 次调用判 fail」的原样场景。
+
+        当时 block_probe 修复后重派任务，偏偏撞上端点+客户端双抖：
+        decide 两次拿到空回复（异常被吞），闭环以「没有执行任何工具调用」
+        判 fail 并记进 L3 账。现在同样的输入必须得到 infra，且不碰账本。
+        """
+        def ask(msgs):
+            raise BrainError("网络错误: [WinError 10061] 由于目标计算机积极拒绝")
+
+        loop = AgentLoop(registry=_reg("say"), tools_for_observation=(),
+                         decide=make_decide(ask, _reg("say")),
+                         verify=make_verify(ask),
+                         plan_fn=lambda g: [g],      # planner 也退化单步
+                         lessons_enabled=True, curriculum_enabled=True,
+                         max_rounds=4)
+        with self._env():
+            s = loop.run_plan("你去 x=-41 到 -37 那面石墙看看，找到缺的那格"
+                              "用圆石补上，再 block_probe 核对那一格")
+        self.assertEqual(s.verdict, "infra")
+        self.assertFalse(os.path.exists(self.cur_file))
+
+    def test_infra_survives_serialization(self):
+        s = AgentState(goal="补墙", infra_error="大脑端点不可达：timeout")
+        self.assertEqual(AgentState.from_dict(s.to_dict()).infra_error,
+                         "大脑端点不可达：timeout")
 
 
 if __name__ == "__main__":

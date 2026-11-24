@@ -200,17 +200,25 @@ def _ask_with_retry(ask: Callable[[list[dict]], str], msgs: list[dict],
     """决策请求重试：上游偶尔只回「服务暂时繁忙」，当成空计划会白烧一整轮。
 
     只在「解析不出任何动作」时重试，正常回复不额外等待。
+    **传输异常不吞**：每次都连不上（端点挂了/网络断）就把最后一个异常抛出去，
+    让调用方标成「考场停电」——2026-10-17 真机踩过：端点抖动时 decide 静默
+    返回空计划，闭环判 fail，一次停电被记成能力失败，污染了 curriculum 账。
     """
     raw = ""
+    last_exc = None
     for i in range(tries + 1):
         try:
             raw = ask(msgs) or ""
-        except Exception:
+            last_exc = None
+        except Exception as e:
             raw = ""
+            last_exc = e
         if raw and _parsed(raw):
             return raw
         if i < tries:
             time.sleep(pause)
+    if last_exc is not None:
+        raise last_exc
     return raw
 
 
